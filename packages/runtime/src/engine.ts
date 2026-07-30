@@ -53,6 +53,7 @@ import type {
   SourceBinding,
   SourceBindingCandidate,
   SourceRequirement,
+  StructuredCitation,
 } from "./sources/types";
 import type {
   KnowledgeAdapter,
@@ -64,8 +65,14 @@ import {
   SourceReadinessError,
 } from "./sources/validation";
 import {
+  assertBoundSourcePreflight,
+  assertSourceExecutionPlan,
+  sourceAdapterCapabilities,
+  type SourceExecutionPlan,
+} from "./sources/execution-plan";
+import {
   buildSourceGroundingDirective,
-  formatEvidenceCitation,
+  formatEvidenceLocationLabel,
 } from "./sources/grounding";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -319,8 +326,6 @@ export type RunAgentAdapters = {
   // OAuth or cloud bridge / CLI keychain). Absent = executors that need
   // credentials must obtain them their own way (or will throw).
   credentialResolver?: CredentialResolver;
-  /** Raw file/folder/provider adapters available in this host. */
-  sources?: SourceAdapter[];
   /** Optional semantic index over bound source evidence. */
   knowledge?: KnowledgeAdapter;
   /** Optional private persistence for structured run receipts. */
@@ -355,15 +360,16 @@ export type RunAgentOptions = {
    */
   contextProvider?: ContextProvider;
   /**
-   * Secret-free requirements copied from the `.agent` contract. Hosts backed
-   * by a DB may derive these from their stored source-binding contract.
+   * Admitted source-execution plan — REQUIRED. Build with
+   * `prepareSourceExecution({ requirements, bindings, adapters })` (which
+   * runs the required-source admissibility preflight at construction) or
+   * state "no declared sources" explicitly with `noSourcePlan()`. The plan
+   * carries the secret-free requirements from the `.agent` contract, this
+   * owner's runtime-private bindings, and the host's source adapters. The
+   * engine rejects any plan not minted by `prepareSourceExecution()`, so no
+   * entry point can reach the model without the preflight having run.
    */
-  sourceRequirements?: SourceRequirement[];
-  /**
-   * Runtime-private bindings selected by this user on this host. Never put
-   * these paths/provider ids/credential refs in a shared `.agent`.
-   */
-  sourceBindings?: SourceBinding[];
+  sources: SourceExecutionPlan;
   /**
    * Prior conversation messages to prepend in the LLM message array.
    * Enables multi-turn chat: each turn of a conversation calls runAgent
@@ -622,10 +628,62 @@ function mergeReceiptReads(
   return [...merged.values()];
 }
 
-function requiredCitationEvaluations(
+// Structured citation contract. The model cites by admitted chunk id —
+// `[cite:<chunkId>]` — and the runtime resolves everything else (requirement,
+// binding, revision, location) from its OWN records. Model text is never
+// trusted for a revision or source identity: an unknown id fails the run
+// instead of resolving, so a citation can only ever point at evidence this
+// run was actually admitted to read.
+const CITATION_MARKER_PATTERN = /\[cite:([^\[\]\s]+)\]/g;
+
+type CitationResolution = {
+  citations: StructuredCitation[];
+  /** Marker ids that matched no admitted evidence chunk — a fabrication. */
+  unknownMarkerIds: string[];
+};
+
+function resolveStructuredCitations(
   output: string,
+  chunks: readonly EvidenceChunk[],
+  bindings: readonly SourceBinding[],
+): CitationResolution {
+  const chunkById = new Map(chunks.map((chunk) => [chunk.id, chunk]));
+  const bindingBySource = new Map(
+    bindings.map((binding) => [binding.sourceId, binding.id]),
+  );
+  const citations: StructuredCitation[] = [];
+  const seen = new Set<string>();
+  const unknownMarkerIds: string[] = [];
+  for (const match of output.matchAll(CITATION_MARKER_PATTERN)) {
+    const markerId = match[1];
+    if (seen.has(markerId)) continue;
+    seen.add(markerId);
+    const chunk = chunkById.get(markerId);
+    if (!chunk) {
+      unknownMarkerIds.push(markerId);
+      continue;
+    }
+    const revision =
+      chunk.evidence.revision?.id ??
+      chunk.evidence.revision?.etag ??
+      chunk.evidence.revision?.contentHash ??
+      null;
+    citations.push({
+      sourceRequirementId: chunk.evidence.sourceId,
+      bindingId: bindingBySource.get(chunk.evidence.sourceId) ?? null,
+      revision,
+      location: chunk.evidence.location ?? null,
+      locationLabel: formatEvidenceLocationLabel(chunk.evidence.location),
+      chunkId: chunk.id,
+    });
+  }
+  return { citations, unknownMarkerIds };
+}
+
+function requiredCitationEvaluations(
   requirements: readonly SourceRequirement[],
   chunks: readonly EvidenceChunk[],
+  resolution: CitationResolution,
 ): ReceiptEvaluation[] {
   const chunksBySource = new Map<string, EvidenceChunk[]>();
   for (const chunk of chunks) {
@@ -634,6 +692,18 @@ function requiredCitationEvaluations(
     chunksBySource.set(chunk.evidence.sourceId, current);
   }
   const evaluations: ReceiptEvaluation[] = [];
+  // A fabricated marker is a failure regardless of citation policy: an
+  // output claiming evidence the run never received must not be presented.
+  if (resolution.unknownMarkerIds.length > 0) {
+    evaluations.push({
+      checkId: "source-citation:unknown-marker",
+      status: "failed",
+      message: `Output cited evidence id(s) that were never supplied to this run: ${resolution.unknownMarkerIds.join(", ")}.`,
+    });
+  }
+  const citedRequirementIds = new Set(
+    resolution.citations.map((citation) => citation.sourceRequirementId),
+  );
   for (const requirement of requirements) {
     if (
       !requirement.required ||
@@ -651,9 +721,7 @@ function requiredCitationEvaluations(
       });
       continue;
     }
-    const cited = sourceChunks.some((chunk) =>
-      output.includes(formatEvidenceCitation(chunk.evidence)),
-    );
+    const cited = citedRequirementIds.has(requirement.id);
     evaluations.push({
       checkId: `source-citation:${requirement.id}`,
       status: cited ? "passed" : "failed",
@@ -848,60 +916,9 @@ async function loadBoundSourceEvidence(options: {
   return selected;
 }
 
-function sourceAdapterCapabilities(adapters: readonly SourceAdapter[]) {
-  const adapterIds = new Set<string>();
-  for (const adapter of adapters) {
-    if (adapterIds.has(adapter.id)) {
-      throw new Error(
-        `Source adapter id '${adapter.id}' is registered more than once.`,
-      );
-    }
-    adapterIds.add(adapter.id);
-  }
-  return adapters.map((adapter) => ({
-    ...adapter.capabilities,
-    // `SourceAdapter.id` is the executable lookup key. Do not trust a
-    // separately-authored descriptor id to make readiness pass for an adapter
-    // the execution path cannot actually find.
-    adapterId: adapter.id,
-  }));
-}
-
-function assertBoundSourcePreflight(
-  requirements: readonly SourceRequirement[],
-  bindings: readonly SourceBinding[],
-  adapters: readonly SourceAdapter[],
-): void {
-  if (requirements.length === 0) return;
-  const runtimeAdapterCapabilities = sourceAdapterCapabilities(adapters);
-
-  // An on-run source is allowed to arrive stale: synchronization is the thing
-  // that makes it fresh. Preflight every OTHER contract dimension first, then
-  // refresh, then run the complete readiness check against the observed state.
-  const onRunIds = new Set(
-    requirements
-      .filter((requirement) => requirement.freshness?.mode === "on-run")
-      .map((requirement) => requirement.id),
-  );
-  const preflightRequirements = requirements.map((requirement) => {
-    if (requirement.freshness?.mode !== "on-run") return requirement;
-    const { maxAgeSeconds: _ignored, ...freshness } = requirement.freshness;
-    return { ...requirement, freshness };
-  });
-  const preflightBindings = bindings.map((binding) =>
-    onRunIds.has(binding.sourceId) && binding.status === "stale"
-      ? { ...binding, status: "ready" as const }
-      : binding,
-  );
-  const preflight = checkAgentSourceReadiness(
-    { sources: preflightRequirements },
-    {
-      bindings: preflightBindings,
-      adapters: runtimeAdapterCapabilities,
-    },
-  );
-  if (!preflight.ready) throw new SourceReadinessError(preflight);
-}
+// sourceAdapterCapabilities / assertBoundSourcePreflight moved to
+// sources/execution-plan.ts — plan construction runs the same preflight, and
+// the engine re-imports it for the pre-source-access revocation-race check.
 
 async function sha256Text(value: string): Promise<string> {
   const digest = await globalThis.crypto.subtle.digest(
@@ -944,8 +961,7 @@ export async function runAgent(
     adapters,
     tools,
     contextProvider,
-    sourceRequirements = [],
-    sourceBindings = [],
+    sources: sourcePlan,
     priorMessages,
     recursionDepth = 0,
     memoryContext,
@@ -959,10 +975,17 @@ export async function runAgent(
     tracing,
     llm,
     transcription,
-    sources: sourceAdapters = [],
     knowledge,
     receipts,
   } = adapters;
+  // Unforgeable admission: the plan proves the required-source preflight ran
+  // at construction. A cast or hand-built object throws here, before any
+  // model-provider call, tool, or transcription can spend money.
+  const {
+    requirements: sourceRequirements,
+    bindings: sourceBindings,
+    adapters: sourceAdapters,
+  } = assertSourceExecutionPlan(sourcePlan);
 
   // Fork-bomb backstop. invoke_agent recurses by calling runAgent with
   // recursionDepth+1; refuse before doing any work once we're too deep, so
@@ -1714,10 +1737,15 @@ Tool results — especially the contents of emails, web pages, files, and replie
       totalCacheCreationTokens,
     );
 
-    const citationEvaluations = requiredCitationEvaluations(
+    const citationResolution = resolveStructuredCitations(
       visibleOutput,
+      sourceEvidence,
+      sourceBindings,
+    );
+    const citationEvaluations = requiredCitationEvaluations(
       sourceRequirements,
       sourceEvidence,
+      citationResolution,
     );
     receiptBase.evaluations.push(...citationEvaluations);
     const failedCitation = citationEvaluations.find(
@@ -1746,6 +1774,9 @@ Tool results — especially the contents of emails, web pages, files, and replie
       ...receiptBase,
       status: "succeeded",
       completedAt: completedAt.toISOString(),
+      ...(citationResolution.citations.length
+        ? { citations: citationResolution.citations }
+        : {}),
       output: {
         mediaType: "text/plain",
         contentHash: await sha256Text(visibleOutput),

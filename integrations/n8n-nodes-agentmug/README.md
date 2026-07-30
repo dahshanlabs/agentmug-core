@@ -6,11 +6,21 @@ and get the result back — to chain into the other 1,000+ n8n nodes.
 
 ## Why it's different
 
-The agent runs on **your own keys** — your model key and your connected-account
-tokens (Gmail, Sheets, Bluesky, …). AgentMug takes **0% of inference**, so there's
-no per-run platform tax, and the agent is a **portable `.agent` file you own** that
-runs on the web, desktop, and CLI — not a node locked to one vendor's
-cloud. (Tool coverage differs per host; the cloud has the full catalog.)
+The agent acts through **your own connected-account tokens** (Gmail, Sheets,
+Bluesky, …) — those credentials stay yours and are never copied into the
+workflow. And the agent is a **portable `.agent` file you own**: export it and
+run it on the web, desktop, or CLI, rather than a node locked to one vendor's
+cloud.
+
+Two things to know before you wire it up:
+
+- **Model inference is billed to whoever runs the endpoint.** This node calls
+  the hosted AgentMug endpoint by default, where inference runs on the
+  operator's key — not yours. Point `Base URL` at your own deployment if you
+  want inference on your own key.
+- **Tool coverage differs per host.** The cloud has the full catalog, so an
+  agent that works here may hit an unwired tool when you run the same file on
+  desktop or CLI.
 
 ## Install
 

@@ -335,6 +335,31 @@ export type ReceiptEvaluation = {
 };
 
 /**
+ * A machine-checkable citation resolved from a `[cite:<chunkId>]` marker in
+ * the model's output. Every field except `chunkId` is copied from the run's
+ * OWN admitted evidence and bindings — never parsed from model text — so a
+ * citation cannot name a source, revision, or location the run was not
+ * admitted to read. An unknown marker id fails the run instead of resolving.
+ *
+ * A citation validates traceability to supplied evidence. It does not, and
+ * cannot, validate that the conclusion drawn from that evidence is correct.
+ */
+export type StructuredCitation = {
+  /** Portable SourceRequirement.id this citation resolves to. */
+  sourceRequirementId: string;
+  /** This owner's binding that satisfied the requirement, when bound. */
+  bindingId: string | null;
+  /** Admitted revision identity (id/etag/contentHash) from the evidence. */
+  revision: string | null;
+  /** Structured location inside the source, from the admitted chunk. */
+  location: EvidenceLocation | null;
+  /** Human-readable location label, e.g. "page 2". */
+  locationLabel: string;
+  /** The admitted evidence chunk the model referenced. */
+  chunkId: string;
+};
+
+/**
  * Structured proof of what a run read, changed, approved, and verified.
  */
 export type RunReceipt = {
@@ -350,6 +375,12 @@ export type RunReceipt = {
   writes: ReceiptSourceWrite[];
   approvals: ReceiptApproval[];
   evaluations: ReceiptEvaluation[];
+  /**
+   * Structured citations resolved from the output's `[cite:<chunkId>]`
+   * markers against this run's admitted evidence. Present on succeeded
+   * receipts of citation-bearing runs; additive — older readers ignore it.
+   */
+  citations?: StructuredCitation[];
   output?: {
     mediaType?: string;
     contentHash?: string;

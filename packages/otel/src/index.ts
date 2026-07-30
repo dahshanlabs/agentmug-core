@@ -98,9 +98,14 @@ function preview(value: string | undefined, max: number): string {
 }
 
 /**
- * AgentMug plugin packaging the OTel adapter. Lets consumers wire
- * via `tools.loadPlugin(otelPlugin)` instead of constructing the
- * adapter by hand. Identical behavior either way.
+ * AgentMug plugin packaging the OTel adapter, for consumers who already
+ * pass plugins around rather than constructing adapters by hand.
+ *
+ * NOTE: loading this into a registry does NOT enable tracing.
+ * `InMemoryToolRegistry.loadPlugin` iterates `plugin.tools` only and never
+ * reads `plugin.adapters`, and this plugin ships no tools — so
+ * `tools.loadPlugin(createOtelPlugin())` is a no-op. Pass the adapter to the
+ * run explicitly: `runAgent({ adapters: { tracing: plugin.adapters.tracing } })`.
  *
  * The plugin's `adapters.tracing` is the same instance the
  * standalone `OtelTracingAdapter` constructor produces.

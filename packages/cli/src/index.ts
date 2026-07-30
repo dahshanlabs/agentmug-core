@@ -64,6 +64,7 @@ import {
   type ReminderResult,
   type ReminderContext,
   type RemindersAdapter,
+  prepareSourceExecution,
 } from "@agentmug/runtime";
 import { FileAgentFileStore } from "./agent-file-store.js";
 import { FileAgentFolderStore } from "./agent-folder-store.js";
@@ -903,23 +904,21 @@ async function runCli(args: CliArgs): Promise<number> {
           tracing,
           llm,
           credentialResolver: new EnvCredentialResolver(),
-          ...(file.sources?.length
+          ...(file.sources?.length && workerPath
             ? {
-                sources: [sourceRuntime.adapter],
-                ...(workerPath
-                  ? {
-                      receipts: new CliReceiptStore(workerPath, file.id, {
-                        agent: file,
-                        bindings: workerSources?.bindings ?? [],
-                      }),
-                    }
-                  : {}),
+                receipts: new CliReceiptStore(workerPath, file.id, {
+                  agent: file,
+                  bindings: workerSources?.bindings ?? [],
+                }),
               }
             : {}),
         },
         tools: subRegistry,
-        sourceRequirements: file.sources,
-        sourceBindings: workerSources?.bindings ?? [],
+        sources: prepareSourceExecution({
+          requirements: file.sources ?? [],
+          bindings: workerSources?.bindings ?? [],
+          adapters: file.sources?.length ? [sourceRuntime.adapter] : [],
+        }),
         recursionDepth: (parentContext.recursionDepth ?? 0) + 1,
         memoryContext: workerPath ? buildBrainIndex(file.brain) : "",
         // The CLI is an unattended runner (cron/CI, no human) — any approval-
@@ -969,14 +968,16 @@ async function runCli(args: CliArgs): Promise<number> {
       credentialResolver: new EnvCredentialResolver(),
       ...(hasSources
         ? {
-            sources: [sourceRuntime.adapter],
             receipts: receiptStore,
           }
         : {}),
     },
     tools: registry,
-    sourceRequirements: agentFile.sources,
-    sourceBindings: sourceRuntime.bindings,
+    sources: prepareSourceExecution({
+      requirements: agentFile.sources ?? [],
+      bindings: sourceRuntime.bindings,
+      adapters: hasSources ? [sourceRuntime.adapter] : [],
+    }),
     // The CLI is an unattended runner (cron / CI / `agentmug run`) — no human to
     // approve anything. Mark it so any approval-gated tool fails closed instead
     // of blocking on a prompt nobody can answer. (No shell executor is wired in

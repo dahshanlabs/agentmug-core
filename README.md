@@ -1,7 +1,7 @@
 # AgentMug Core
 
-**Portable AI workers that run on your models, your credentials, and your
-infrastructure.**
+**Portable AI workers. Build once. Connect your systems. Run anywhere.
+Review every run.**
 
 A worker packages its job, tools, knowledge requirements, permissions,
 schedules, and runtime behavior into a portable `.agent` file. Run the same

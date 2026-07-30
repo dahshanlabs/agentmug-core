@@ -61,8 +61,9 @@ const ACCEPTED_SCHEMAS = new Set([
  *     require user auth depending on the target.
  *   - "nango": proxied through self-hosted Nango. The agent declares
  *     the provider + endpoint + method; Nango injects the user's
- *     OAuth token at call time. Unlocks 200+ APIs without per-provider
- *     code on the runtime side.
+ *     OAuth token at call time. Routes through the operator's configured
+ *     Nango integrations — a provider works only once the operator has
+ *     configured it — with no per-provider code on the runtime side.
  */
 export type ToolReference =
   | BuiltinToolReference

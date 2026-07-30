@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agentmug.com/schemas/agent.v1.json",
   "title": "AgentMug Agent File v1",
-  "description": "Portable agent definition format. One JSON file captures everything a runtime needs to execute the agent: cloud, desktop, CLI, or any custom runtime that implements the spec. Files are publishable as-is — they never contain secrets. The agent declares which credentials it needs and the runtime asks the user to supply them.",
+  "description": "Portable agent definition format. One documented JSON file that cloud, desktop, CLI, and custom runtimes all read, and that you can re-import, fork, diff, and version-control. Files are publishable as-is — they never contain secrets, credentials, or private source bindings. The agent declares which credentials it needs and each runtime asks the user to supply them.",
   "type": "object",
   "required": [
     "$schema",
@@ -186,7 +186,7 @@
           "placeholder": { "type": "string" },
           "artifact": {
             "type": "object",
-            "description": "Secret-free compatibility contract for a private file binding. Carries only kind, accepted formats, and privacy-safe structural requirements â€” never filenames, sample values, rows, prose, image bytes, or credentials.",
+            "description": "Secret-free compatibility contract for a private file binding. Carries only kind, accepted formats, and privacy-safe structural requirements — never filenames, sample values, rows, prose, image bytes, or credentials.",
             "required": ["kind", "accepts"],
             "additionalProperties": true,
             "properties": {

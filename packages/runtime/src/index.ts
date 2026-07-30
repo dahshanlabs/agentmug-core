@@ -92,6 +92,7 @@ export type {
   ReceiptSourceWrite,
   ReceiptEvaluation,
   RunReceipt,
+  StructuredCitation,
 } from "./sources/types";
 export type {
   SourceReadRequest,
@@ -129,6 +130,13 @@ export {
   buildSourceGroundingDirective,
 } from "./sources/grounding";
 export type { SourceGroundingOptions } from "./sources/grounding";
+export {
+  prepareSourceExecution,
+  noSourcePlan,
+  assertSourceExecutionPlan,
+  assertBoundSourcePreflight,
+} from "./sources/execution-plan";
+export type { SourceExecutionPlan } from "./sources/execution-plan";
 
 export {
   AnthropicLlmClient,

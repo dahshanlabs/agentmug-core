@@ -19,10 +19,13 @@ type CredentialTestHelpers = ICredentialTestFunctions["helpers"] & {
 /**
  * AgentMug node — run an AgentMug agent as a step in any n8n workflow.
  *
- * Calls the agent's external-invoke endpoint with the user's own key, so
- * the run happens on THEIR model + connected-account credentials. Unlike a
- * hosted agent node, an AgentMug agent is a portable .agent file the user
- * owns and can run identically on the web, desktop, and CLI.
+ * Calls the agent's external-invoke endpoint with the user's AgentMug API key.
+ * Tool calls act through the user's own connected-account credentials, but
+ * model inference on the hosted endpoint runs on the OPERATOR's key — point
+ * `Base URL` at a self-hosted deployment to bill inference to your own. Unlike
+ * a node locked to one vendor's cloud, the agent is a portable .agent file the
+ * user owns and can also run on desktop and CLI, with the caveat that tool
+ * coverage differs per host.
  */
 export class AgentMug implements INodeType {
   description: INodeTypeDescription = {

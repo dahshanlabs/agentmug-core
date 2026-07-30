@@ -88,7 +88,7 @@ export const memoryForgetDefinition: InlineToolDefinition = {
   },
 };
 
-// memory.reflect — the self-improving step. Without it, memory is
+// memory.reflect — the consolidation step. Without it, memory is
 // write-only accumulation: facts pile up, duplicate, contradict, and
 // go stale until the recall list is noise. reflect closes the loop:
 // the agent reviews its accumulated memories (optionally focused on a

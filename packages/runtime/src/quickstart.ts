@@ -37,6 +37,7 @@ import type { AgentInput } from "./inputs/types";
 import type { AgentFileV1 } from "./format/agent-file";
 import { AnthropicLlmClient } from "./adapters/llm";
 import { InMemoryToolRegistry, type ToolRegistry } from "./tools/registry";
+import { prepareSourceExecution } from "./sources/execution-plan";
 import type { SourceBinding } from "./sources/types";
 import type {
   KnowledgeAdapter,
@@ -218,12 +219,17 @@ export async function quickRun(
       persistence,
       tracing,
       llm: llmClient,
-      sources: sourceAdapters,
       ...(knowledge ? { knowledge } : {}),
       ...(receipts ? { receipts } : {}),
     },
-    sourceRequirements: agentFile.sources ?? [],
-    sourceBindings,
+    // Plan construction runs the required-source admissibility preflight —
+    // a missing/stale/unauthorized required source refuses the run here,
+    // before the model is ever called.
+    sources: prepareSourceExecution({
+      requirements: agentFile.sources ?? [],
+      bindings: sourceBindings,
+      adapters: sourceAdapters,
+    }),
     tools: tools ?? new InMemoryToolRegistry(),
     onEvent: onEvent ?? (() => {}),
   });

@@ -42,16 +42,24 @@ Transcription calls get their own spans with provider + audio token counts.
 
 ## As a plugin
 
-If you'd rather wire via the plugin API:
+`createOtelPlugin()` packages the adapter as an `AgentMugPlugin`, which is handy
+if you already pass plugins around. **It does not register tracing by itself** —
+`InMemoryToolRegistry.loadPlugin` only reads `plugin.tools`, and this plugin
+ships no tools. You still have to hand the adapter to `runAgent`:
 
 ```typescript
-import { InMemoryToolRegistry } from "@agentmug/runtime";
 import { createOtelPlugin } from "@agentmug/otel";
 
-const tools = new InMemoryToolRegistry();
-tools.loadPlugin(createOtelPlugin());
-// the tracing adapter is now available on the plugin's adapters bundle
+const otelPlugin = createOtelPlugin();
+
+await runAgent({
+  // ...
+  adapters: { tracing: otelPlugin.adapters.tracing },
+});
 ```
+
+If you are not already routing plugins through your own wiring, construct
+`OtelTracingAdapter` directly as shown above — it is the same instance.
 
 ## Custom tracer
 

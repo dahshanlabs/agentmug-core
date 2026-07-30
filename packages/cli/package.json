@@ -1,6 +1,6 @@
 {
   "name": "@agentmug/cli",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Run, inspect, and control AgentMug workers from the command line. Executes the same portable .agent file as the desktop app and cloud, against your own provider key.",
   "license": "Apache-2.0",
   "publishConfig": {

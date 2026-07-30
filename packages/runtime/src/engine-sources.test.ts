@@ -23,12 +23,17 @@ import type {
   SourceRequirement,
 } from "./sources/types";
 import { SourceReadinessError } from "./sources/validation";
+import {
+  prepareSourceExecution,
+  noSourcePlan,
+  type SourceExecutionPlan,
+} from "./sources/execution-plan";
 
 class CapturingLlm implements LlmClient {
   readonly calls: LlmStreamParams[] = [];
 
   constructor(
-    private readonly answer = "Grounded answer [source:policy | revision:rev-7 | page 2]",
+    private readonly answer = "Grounded answer [source:policy | revision:rev-7 | page 2] [cite:policy-page-2]",
   ) {}
 
   async *streamMessage(params: LlmStreamParams): AsyncIterable<LlmStreamEvent> {
@@ -68,7 +73,7 @@ class SideEffectRequestLlm implements LlmClient {
       return;
     }
     const answer =
-      "I need your confirmation before sending. [source:policy | revision:rev-7 | page 2]";
+      "I need your confirmation before sending. [source:policy | revision:rev-7 | page 2] [cite:policy-page-2]";
     yield { type: "text_delta", text: answer };
     yield {
       type: "message_complete",
@@ -195,7 +200,7 @@ test("missing required source blocks before the first LLM call", async () => {
   const { persistence, tracing } = createInMemoryAdapters(file);
 
   await assert.rejects(
-    () =>
+    async () =>
       runAgent({
         agentId: file.id,
         userId: "test-user",
@@ -204,10 +209,12 @@ test("missing required source blocks before the first LLM call", async () => {
           persistence,
           tracing,
           llm,
-          sources: [],
         },
-        sourceRequirements: file.sources,
-        sourceBindings: [],
+        sources: prepareSourceExecution({
+          requirements: file.sources,
+          bindings: [],
+          adapters: [],
+        }),
         onEvent: () => {},
       }),
     SourceReadinessError,
@@ -225,7 +232,7 @@ test("source readiness blocks before transcription and legacy retrieval spend", 
   let contextCalls = 0;
 
   await assert.rejects(
-    () =>
+    async () =>
       runAgent({
         agentId: file.id,
         userId: "test-user",
@@ -244,14 +251,16 @@ test("source readiness blocks before transcription and legacy retrieval spend", 
               return { text: "What is the refund rule?", provider: "test" };
             },
           },
-          sources: [],
         },
         contextProvider: async () => {
           contextCalls += 1;
           return "legacy context";
         },
-        sourceRequirements: file.sources,
-        sourceBindings: [],
+        sources: prepareSourceExecution({
+          requirements: file.sources,
+          bindings: [],
+          adapters: [],
+        }),
         onEvent: () => {},
       }),
     SourceReadinessError,
@@ -269,7 +278,7 @@ test("required source with zero retrieved evidence blocks before the first LLM c
   const { persistence, tracing } = createInMemoryAdapters(file);
 
   await assert.rejects(
-    () =>
+    async () =>
       runAgent({
         agentId: file.id,
         userId: "test-user",
@@ -278,10 +287,12 @@ test("required source with zero retrieved evidence blocks before the first LLM c
           persistence,
           tracing,
           llm,
-          sources: [new StaticSourceAdapter([])],
         },
-        sourceRequirements: file.sources,
-        sourceBindings: [sourceBinding()],
+        sources: prepareSourceExecution({
+          requirements: file.sources,
+          bindings: [sourceBinding()],
+          adapters: [new StaticSourceAdapter([])],
+        }),
         onEvent: () => {},
       }),
     /returned no relevant evidence.*stopped before the model/i,
@@ -370,7 +381,7 @@ test("raw source adapters cannot spoof a different portable source id", async ()
   const { persistence, tracing } = createInMemoryAdapters(file);
 
   await assert.rejects(
-    () =>
+    async () =>
       runAgent({
         agentId: file.id,
         userId: "test-user",
@@ -379,10 +390,12 @@ test("raw source adapters cannot spoof a different portable source id", async ()
           persistence,
           tracing,
           llm,
-          sources: [new StaticSourceAdapter([evidence("other-source")])],
         },
-        sourceRequirements: file.sources,
-        sourceBindings: [sourceBinding()],
+        sources: prepareSourceExecution({
+          requirements: file.sources,
+          bindings: [sourceBinding()],
+          adapters: [new StaticSourceAdapter([evidence("other-source")])],
+        }),
         onEvent: () => {},
       }),
     /returned evidence for 'other-source' while reading 'policy'/,
@@ -404,7 +417,7 @@ test("knowledge adapters fail instead of silently filtering spoofed source ids",
   };
 
   await assert.rejects(
-    () =>
+    async () =>
       runAgent({
         agentId: file.id,
         userId: "test-user",
@@ -413,11 +426,13 @@ test("knowledge adapters fail instead of silently filtering spoofed source ids",
           persistence,
           tracing,
           llm,
-          sources: [new StaticSourceAdapter([evidence()])],
           knowledge,
         },
-        sourceRequirements: file.sources,
-        sourceBindings: [sourceBinding()],
+        sources: prepareSourceExecution({
+          requirements: file.sources,
+          bindings: [sourceBinding()],
+          adapters: [new StaticSourceAdapter([evidence()])],
+        }),
         onEvent: () => {},
       }),
     /undeclared or unbound source 'other-source'/,
@@ -505,4 +520,146 @@ test("retrieved source evidence arms the side-effect gate in quickRun", async ()
   const secondTurn = llm.calls[1].messages.at(-1);
   assert.equal(Array.isArray(secondTurn?.content), true);
   assert.match(JSON.stringify(secondTurn?.content), /confirm/i);
+});
+
+// ── Structural gate invariant ────────────────────────────────────────────────
+// The plan is the unforgeable admission ticket: only prepareSourceExecution()
+// can mint one, and minting runs the required-source preflight. These tests
+// pin both halves so no future entry point can reach the model ungated.
+
+test("a hand-built or cast source plan is rejected before any model call", async () => {
+  const file = agentFile();
+  const llm = new CapturingLlm();
+  const { persistence, tracing } = createInMemoryAdapters(file);
+
+  const forged = {
+    requirements: [],
+    bindings: [],
+    adapters: [],
+  } as unknown as SourceExecutionPlan;
+
+  await assert.rejects(
+    async () =>
+      runAgent({
+        agentId: file.id,
+        userId: "test-user",
+        userInput: "hello",
+        adapters: { persistence, tracing, llm },
+        sources: forged,
+        onEvent: () => {},
+      }),
+    /prepareSourceExecution/,
+  );
+
+  assert.equal(llm.calls.length, 0);
+  assert.equal(persistence.listRuns().length, 0);
+});
+
+test("plan construction IS the preflight: a missing required binding refuses at prepareSourceExecution", () => {
+  assert.throws(
+    () => prepareSourceExecution({ requirements: [sourceRequirement()] }),
+    SourceReadinessError,
+  );
+});
+
+test("noSourcePlan() is the explicit source-less path and still runs", async () => {
+  const file = agentFile();
+  const llm = new CapturingLlm("Hello from a source-less worker.");
+  const { persistence, tracing } = createInMemoryAdapters(file);
+
+  const result = await runAgent({
+    agentId: file.id,
+    userId: "test-user",
+    userInput: "hello",
+    adapters: { persistence, tracing, llm },
+    sources: noSourcePlan(),
+    onEvent: () => {},
+  });
+
+  assert.equal(result.status, "completed");
+  assert.equal(llm.calls.length, 1);
+});
+
+// ── Structured citations ─────────────────────────────────────────────────────
+// The model cites by admitted chunk id; the runtime resolves requirement,
+// binding, revision, and location from its own records. Model text is never
+// trusted for a revision, and a fabricated id fails the run.
+
+test("a valid [cite:] marker resolves to a structured citation on the receipt", async () => {
+  const file = agentFile([sourceRequirement()]);
+  const llm = new CapturingLlm(
+    "Refunds above SAR 5,000 need CFO approval. [cite:policy-page-2]",
+  );
+
+  const result = await quickRun({
+    agentFile: file,
+    userInput: "What is the refund rule?",
+    llm,
+    sourceBindings: [sourceBinding()],
+    sourceAdapters: [new StaticSourceAdapter([evidence()])],
+  });
+
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.receipt?.citations, [
+    {
+      sourceRequirementId: "policy",
+      bindingId: "private-policy-binding",
+      revision: "rev-7",
+      location: { kind: "page", page: 2 },
+      locationLabel: "page 2",
+      chunkId: "policy-page-2",
+    },
+  ]);
+  // The citation's revision comes from the admitted evidence, never from
+  // model prose — the receipt keeps the citation relationship inspectable.
+  assert.equal(
+    result.receipt?.evaluations.find(
+      (evaluation) => evaluation.checkId === "source-citation:policy",
+    )?.status,
+    "passed",
+  );
+});
+
+test("a fabricated [cite:] id fails the run instead of resolving", async () => {
+  const file = agentFile([sourceRequirement()]);
+  const llm = new CapturingLlm(
+    "Grounded answer [cite:policy-page-2] plus a forged one [cite:made-up-chunk-9].",
+  );
+
+  const result = await quickRun({
+    agentFile: file,
+    userInput: "What is the refund rule?",
+    llm,
+    sourceBindings: [sourceBinding()],
+    sourceAdapters: [new StaticSourceAdapter([evidence()])],
+  });
+
+  assert.equal(result.status, "failed");
+  assert.match(result.output, /never supplied to this run/i);
+  assert.match(result.output, /made-up-chunk-9/);
+  assert.equal(result.receipt?.status, "failed");
+  const unknownCheck = result.receipt?.evaluations.find(
+    (evaluation) => evaluation.checkId === "source-citation:unknown-marker",
+  );
+  assert.equal(unknownCheck?.status, "failed");
+});
+
+test("the human citation label alone no longer satisfies a required-citation policy", async () => {
+  const file = agentFile([sourceRequirement()]);
+  // Old substring behavior would have passed this output; the structured
+  // contract requires a machine-checkable marker.
+  const llm = new CapturingLlm(
+    "Grounded answer [source:policy | revision:rev-7 | page 2]",
+  );
+
+  const result = await quickRun({
+    agentFile: file,
+    userInput: "What is the refund rule?",
+    llm,
+    sourceBindings: [sourceBinding()],
+    sourceAdapters: [new StaticSourceAdapter([evidence()])],
+  });
+
+  assert.equal(result.status, "failed");
+  assert.match(result.output, /omitted a supplied citation/i);
 });

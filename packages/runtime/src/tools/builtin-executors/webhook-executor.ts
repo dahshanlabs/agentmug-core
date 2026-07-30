@@ -5,8 +5,8 @@
 // the payload and returns the response — the generic "POST my data somewhere"
 // tool. Browser-safe (global fetch); same net-guard as web.fetch_json
 // (HTTPS-only by default, private/loopback hosts blocked, timeout, body cap),
-// so a webhook tool can't be turned into an SSRF lever. Runs identically on
-// cloud, desktop, and CLI.
+// so a webhook tool can't be turned into an SSRF lever. One executor, shared
+// by cloud, desktop, and CLI.
 
 import type { ToolExecutor, ToolExecutionContext } from "../registry";
 import type { ToolReference, WebhookToolReference } from "../../format/agent-file";

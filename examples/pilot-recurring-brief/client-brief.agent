@@ -1,0 +1,57 @@
+{
+  "$schema": "https://agentmug.com/schemas/agent.v1.json",
+  "id": "pilot-client-brief",
+  "name": "Weekly Client Brief",
+  "description": "Produces a recurring client brief strictly from the approved project source, cites every claim against the exact revision it read, and refuses to run — with a named reason — when the source is missing, stale, or unverified.",
+  "version": "1.0.0",
+  "exportedAt": "2026-07-30T00:00:00.000Z",
+  "blueprint": {
+    "primaryModel": "claude-sonnet-4-6",
+    "systemPrompt": "You prepare a weekly client brief from ONE approved source: the project workbook bound to this worker. Rules:\n\n- Use ONLY the supplied source evidence. Never pull facts from memory or the open web.\n- Every factual claim carries a citation marker [cite:<id>] referencing the evidence item it came from. Uncited claims are rejected by the runtime — do not produce them.\n- Structure: 1) What changed since last week, 2) Current status vs plan, 3) Risks and open decisions, 4) Next week. Keep it under 400 words.\n- If the evidence does not cover a section, say 'No data in the approved source' for that section — never fill gaps with plausible text.\n- Deliver the brief with email.send to the configured recipient when done.",
+    "tools": ["email.send"],
+    "thinkingPatterns": ["chain_of_thought"],
+    "architecture": "solo"
+  },
+  "inputs": {
+    "accepts": ["text"],
+    "placeholder": "Optional focus for this week's brief (e.g. 'emphasize budget')"
+  },
+  "outputs": {
+    "shape": "text",
+    "description": "A cited weekly brief; every claim traceable to the approved source revision on the run receipt."
+  },
+  "sources": [
+    {
+      "id": "project_workbook",
+      "label": "Approved project workbook",
+      "description": "The single source of truth this brief is allowed to read. The recipient binds their own file; the binding never travels with the worker.",
+      "role": "knowledge",
+      "kind": "file",
+      "required": true,
+      "accepts": {
+        "mediaTypes": [
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "application/pdf",
+          "text/csv"
+        ]
+      },
+      "access": { "capabilities": ["read", "cite"] },
+      "freshness": { "mode": "snapshot", "onStale": "fail" },
+      "truth": {
+        "authority": "authoritative",
+        "priority": 90,
+        "conflictPolicy": "fail",
+        "citations": "required"
+      },
+      "sharing": { "strategy": "rebind" }
+    }
+  ],
+  "triggers": [
+    { "type": "manual" },
+    { "type": "schedule", "cron": "0 7 * * 1", "description": "Mondays 07:00" }
+  ],
+  "metadata": {
+    "tags": ["pilot", "brief", "grounded", "citations", "receipt"],
+    "pricing": { "kind": "free" }
+  }
+}

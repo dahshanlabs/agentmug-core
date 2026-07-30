@@ -1,6 +1,7 @@
 {
   "name": "agentmug-example-web-research",
-  "version": "0.0.13",
+  "version": "0.0.14",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "scripts": {

@@ -44,8 +44,9 @@ export type ResolvedCredential = {
 /**
  * The host's credential broker. Lets a portable executor obtain the
  * credential for a provider WITHOUT importing host-specific code, which
- * is what makes a credentialed tool run identically on cloud, desktop,
- * and CLI. Each host supplies its own implementation:
+ * is what lets one credentialed tool definition run on cloud, desktop, and
+ * CLI with each host supplying the credential. Each host supplies its own
+ * implementation:
  *
  *  - cloud:   reads the encrypted `user_credentials` row + refreshes.
  *  - desktop: a priority chain — a local OAuth token (BYO, offline) →

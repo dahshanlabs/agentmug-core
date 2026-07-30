@@ -6,7 +6,7 @@
 // and the CLI/desktop simply never wired the compute tools, so a portable
 // .agent doing web fetches or CSV analysis validated everywhere but
 // dead-ended with "Unknown tool" off-cloud. That broke the core promise:
-// "the same .agent runs identically in all four runtimes."
+// "one worker file, four places to run it."
 //
 // These three tools need ZERO host infrastructure and ZERO credentials —
 // pure HTTP + parsing — so they can live in the portable package and be
