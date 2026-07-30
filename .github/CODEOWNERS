@@ -1,0 +1,26 @@
+# Bootstrap ownership for the public repository. Before the first release,
+# add at least one independent, eligible maintainer to every rule below and
+# enable required CODEOWNER review with self-review and bypass disabled.
+
+* @dahshanlabs
+
+# Supply-chain and release controls
+/.github/ @dahshanlabs
+/.changeset/ @dahshanlabs
+/config/ @dahshanlabs
+/scripts/ @dahshanlabs
+
+# Published source, contracts, and dependency manifests
+/packages/ @dahshanlabs
+/integrations/ @dahshanlabs
+/spec/ @dahshanlabs
+/package.json @dahshanlabs
+/pnpm-lock.yaml @dahshanlabs
+
+# Licensing, security, governance, and release policy
+/LICENSE @dahshanlabs
+/NOTICE @dahshanlabs
+/OPEN_SOURCE.md @dahshanlabs
+/PUBLIC_RELEASE.md @dahshanlabs
+/SECURITY.md @dahshanlabs
+/TRADEMARKS.md @dahshanlabs

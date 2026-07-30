@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 2,
+  "kind": "agentmug-public-core-staging",
+  "sourceCommitSha": "8cd0827eab17526ef83e37e583cc53fed76919e6",
+  "manifestSha256": "e69c5f1645a23a97d9c106a5b67f437d171940d25309c29b593e9d9c8d2172ec"
+}

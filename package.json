@@ -1,0 +1,38 @@
+{
+  "name": "agentmug-core",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "Apache-2.0 portable-agent specification, runtime, CLI, bridges, integrations, and examples.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dahshanlabs/agentmug-core.git"
+  },
+  "scripts": {
+    "build": "pnpm run build:packages && npm --prefix integrations/n8n-nodes-agentmug run build",
+    "build:packages": "pnpm --filter @agentmug/runtime run build && pnpm --filter @agentmug/cli run build && pnpm --filter @agentmug/mcp-bridge run build && pnpm --filter @agentmug/otel run build",
+    "lint": "npm --prefix integrations/n8n-nodes-agentmug run lint",
+    "typecheck": "pnpm --filter @agentmug/runtime run typecheck && pnpm --filter @agentmug/cli run typecheck && pnpm --filter @agentmug/mcp-bridge run typecheck && pnpm --filter @agentmug/otel run typecheck",
+    "test:release-state": "node --test scripts/audit-public-core.test.mjs scripts/check-public-package-licenses.test.mjs scripts/public-core-release-state.test.mjs scripts/guard-public-publish.test.mjs",
+    "test:first-release-transition": "node scripts/test-public-core-version-transition.mjs",
+    "test": "pnpm --filter @agentmug/runtime run test:artifact-contract && pnpm --filter @agentmug/runtime run test:source-contract && pnpm --filter @agentmug/runtime run test:engine-sources && pnpm --filter @agentmug/runtime run test:net-guard && pnpm --filter @agentmug/runtime run test:llm-routing && pnpm --filter @agentmug/cli run test && pnpm --filter @agentmug/mcp-bridge run test && npm --prefix integrations/n8n-nodes-agentmug test && pnpm run test:release-state",
+    "security:audit": "pnpm audit --prod --audit-level moderate && npm --prefix integrations/n8n-nodes-agentmug audit --omit=dev --audit-level moderate",
+    "security:licenses": "node scripts/check-public-package-licenses.mjs && node scripts/check-production-licenses.mjs",
+    "security:tree": "node scripts/audit-public-core.mjs --root . --public-repository dahshanlabs/agentmug-core",
+    "pack:verify": "node scripts/verify-package-tarballs.mjs",
+    "format:check": "prettier --check .",
+    "verify": "pnpm run lint && pnpm run build && pnpm run typecheck && pnpm run test && pnpm run security:audit && pnpm run security:licenses && pnpm run security:tree && pnpm run pack:verify",
+    "changeset": "changeset",
+    "version-packages": "changeset version && node scripts/audit-public-core.mjs --root . --public-repository dahshanlabs/agentmug-core --write-manifest",
+    "release:publish": "node scripts/guard-public-publish.mjs && changeset publish"
+  },
+  "packageManager": "pnpm@10.33.3",
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.10",
+    "prettier": "^3.8.1",
+    "typescript": "~5.9.2"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "name": "@agentmug/mcp-bridge",
+  "version": "0.2.1",
+  "description": "Expose a hosted AgentMug worker as an MCP server for Claude Code, Cursor, Cline, Continue, and compatible hosts.",
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "type": "module",
+  "bin": {
+    "agentmug-mcp-bridge": "./dist/index.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "tsx src/index.ts",
+    "test": "node --import tsx --test src/index.test.ts",
+    "prepack": "node ../../scripts/prepare-package-license.mjs",
+    "postpack": "node ../../scripts/prepare-package-license.mjs --clean",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "esbuild": "0.27.3",
+    "tsx": "catalog:",
+    "typescript": "~5.9.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dahshanlabs/agentmug-core.git",
+    "directory": "packages/mcp-bridge"
+  },
+  "homepage": "https://agentmug.com",
+  "bugs": "https://github.com/dahshanlabs/agentmug-core/issues",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "cursor",
+    "continue",
+    "ai",
+    "agent",
+    "agentmug",
+    "ai-worker",
+    "cline"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

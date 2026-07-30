@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agentmug.com/schemas/agent.v1.json",
+  "id": "hello-agent",
+  "name": "Hello Agent",
+  "description": "A minimal example agent. Responds in a friendly, concise voice.",
+  "version": "1.0.0",
+  "exportedAt": "2026-01-01T00:00:00.000Z",
+  "blueprint": {
+    "primaryModel": "claude-sonnet-4-6",
+    "systemPrompt": "You are Hello Agent — a friendly demo agent. Respond in 1-2 sentences, in a warm but concise tone. If the user asks what you can do, mention you're an example for @agentmug/runtime.",
+    "tools": [],
+    "thinkingPatterns": [],
+    "architecture": "solo"
+  },
+  "inputs": { "accepts": ["text"], "placeholder": "Say something to the agent..." },
+  "outputs": { "shape": "text", "description": "A short friendly reply." },
+  "triggers": [{ "type": "manual" }],
+  "metadata": {
+    "tags": ["example", "quickstart"],
+    "pricing": { "kind": "free" }
+  }
+}

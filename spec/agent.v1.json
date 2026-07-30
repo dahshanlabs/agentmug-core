@@ -1,0 +1,698 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentmug.com/schemas/agent.v1.json",
+  "title": "AgentMug Agent File v1",
+  "description": "Portable agent definition format. One JSON file captures everything a runtime needs to execute the agent: cloud, desktop, CLI, or any custom runtime that implements the spec. Files are publishable as-is — they never contain secrets. The agent declares which credentials it needs and the runtime asks the user to supply them.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "id",
+    "name",
+    "description",
+    "version",
+    "exportedAt",
+    "blueprint",
+    "inputs"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "URL of the schema this file conforms to. Acts as the canonical version marker — readers MUST verify before parsing.",
+      "enum": [
+        "https://agentmug.com/schemas/agent.v1.json",
+        "https://agentlit.dahshanlabs.com/schemas/agent.v1.json"
+      ]
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identifier within the source AgentMug instance. Survives forks; new instances assign a new id."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Display name shown in dashboards and marketplaces."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Short user-facing summary of what the agent does."
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Semver-style version of the agent definition itself (not the file format). Bumped when the blueprint changes."
+    },
+    "exportedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp this file was generated."
+    },
+    "blueprint": {
+      "type": "object",
+      "required": ["primaryModel", "systemPrompt", "tools"],
+      "additionalProperties": true,
+      "properties": {
+        "primaryModel": {
+          "type": "string",
+          "description": "Model identifier the runtime maps to an LLM client (e.g. 'claude-sonnet-4-6').",
+          "examples": [
+            "claude-sonnet-4-6",
+            "claude-opus-4-7",
+            "claude-haiku-4-5"
+          ]
+        },
+        "systemPrompt": {
+          "type": "string",
+          "description": "Full system prompt verbatim. Sent to the LLM on every run."
+        },
+        "tools": {
+          "type": "array",
+          "description": "Tools the agent is permitted to use. Accepts two shapes: a bare string of a builtin tool id, or a rich ToolReference object that describes MCP / webhook / builtin tools with credential requirements.",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "description": "Shorthand — resolved as a builtin tool by name."
+              },
+              { "$ref": "#/$defs/toolReference" }
+            ]
+          }
+        },
+        "thinkingPatterns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional free-form pattern hints (e.g. 'chain_of_thought', 'react', 'chain_of_verification')."
+        },
+        "architecture": {
+          "type": "string",
+          "description": "Optional architecture marker. Currently only 'solo' is wired end-to-end.",
+          "examples": [
+            "solo",
+            "orchestrator_workers",
+            "pipeline",
+            "hierarchical"
+          ]
+        }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "required": ["accepts"],
+      "additionalProperties": true,
+      "properties": {
+        "accepts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["text", "audio", "image"] },
+          "description": "Modalities the agent accepts. Drives runtime UI — a desktop shell with only 'text' shows a text box; adding 'audio' adds a mic button."
+        },
+        "placeholder": {
+          "type": "string",
+          "description": "Placeholder text shown in the input UI."
+        },
+        "schema": {
+          "type": "object",
+          "description": "Optional JSON Schema for structured-text inputs."
+        }
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "required": ["shape"],
+      "additionalProperties": true,
+      "properties": {
+        "shape": {
+          "enum": ["text", "json", "void"],
+          "description": "How the agent's response is shaped. 'void' = the agent acts (sends an email, creates a reminder) and stays silent."
+        },
+        "schema": {
+          "type": "object",
+          "description": "Optional JSON Schema describing the output for shape='json'."
+        },
+        "description": {
+          "type": "string",
+          "description": "Short plain-language description of what the user will see."
+        }
+      }
+    },
+    "parameters": {
+      "type": "array",
+      "description": "Optional user-supplied parameters. The runtime renders a form for these on fork and substitutes their values into the system prompt as `{{params.<name>}}` placeholders at run time. Lets agents be self-configuring without code edits.",
+      "items": {
+        "type": "object",
+        "required": ["name", "label", "type", "required"],
+        "additionalProperties": true,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "description": "Internal id used in `{{params.<name>}}` substitution. snake_case."
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Display label shown next to the input."
+          },
+          "description": { "type": "string" },
+          "type": {
+            "enum": [
+              "string",
+              "text",
+              "number",
+              "boolean",
+              "email",
+              "url",
+              "select",
+              "file"
+            ]
+          },
+          "options": {
+            "type": "array",
+            "description": "Required when type='select'.",
+            "items": {
+              "type": "object",
+              "required": ["value", "label"],
+              "properties": {
+                "value": { "type": "string" },
+                "label": { "type": "string" }
+              }
+            }
+          },
+          "default": {},
+          "required": { "type": "boolean" },
+          "placeholder": { "type": "string" },
+          "artifact": {
+            "type": "object",
+            "description": "Secret-free compatibility contract for a private file binding. Carries only kind, accepted formats, and privacy-safe structural requirements â€” never filenames, sample values, rows, prose, image bytes, or credentials.",
+            "required": ["kind", "accepts"],
+            "additionalProperties": true,
+            "properties": {
+              "kind": { "enum": ["document", "table", "image"] },
+              "accepts": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "structure": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "description": "Workflow-relevant schema such as sheet and column names. Must not contain private values."
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": { "type": { "const": "file" } },
+              "required": ["type"]
+            },
+            "then": {
+              "required": ["artifact"],
+              "not": { "required": ["default"] }
+            }
+          }
+        ]
+      }
+    },
+    "triggers": {
+      "type": "array",
+      "description": "Triggers the agent supports on the target runtime. Runtimes that can't honor a declared trigger fail loud rather than silently dropping it.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["type"],
+            "properties": { "type": { "const": "manual" } }
+          },
+          {
+            "type": "object",
+            "required": ["type", "cron"],
+            "properties": {
+              "type": { "const": "schedule" },
+              "cron": {
+                "type": "string",
+                "description": "Standard cron expression."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "What the agent should do when the schedule fires (a scheduled run has no typed user message)."
+              },
+              "timezone": {
+                "type": "string",
+                "description": "IANA timezone the cron is evaluated in. Default UTC."
+              },
+              "label": {
+                "type": "string",
+                "description": "Human label for schedule UIs."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["type", "path"],
+            "properties": {
+              "type": { "const": "webhook" },
+              "path": { "type": "string" }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["type", "endpoint"],
+            "properties": {
+              "type": { "const": "api" },
+              "endpoint": { "type": "string" }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Forward-compat: trigger types from NEWER formats validate (runtimes tolerate them at parse and fail loud at execution) — known types above stay strictly validated.",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "not": { "enum": ["manual", "schedule", "webhook", "api"] }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "connectivity": {
+      "type": "object",
+      "description": "The connectivity contract: what this agent needs from the world to WORK (beyond tool credentials). References and roles only — never secrets, never literal phone numbers or addresses. Identities resolve at runtime against the importing user's own connected accounts.",
+      "additionalProperties": true,
+      "properties": {
+        "identities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["role", "channel"],
+            "properties": {
+              "role": { "const": "owner" },
+              "channel": {
+                "type": "string",
+                "description": "Transport this identity is used on (phone, email, ...)."
+              }
+            }
+          }
+        },
+        "reads": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["provider", "resource"],
+            "properties": {
+              "provider": { "type": "string" },
+              "resource": { "type": "string" }
+            }
+          }
+        },
+        "delivers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["channel", "to", "via"],
+            "properties": {
+              "channel": { "type": "string" },
+              "to": { "const": "owner" },
+              "via": {
+                "type": "string",
+                "description": "The delivery tool that satisfies this entry (e.g. twilio.send_whatsapp)."
+              }
+            }
+          }
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "description": "Portable, secret-free requirements for files, folders, workspaces, Klypix brains, and provider resources. This is a contract only: private paths, provider item IDs, account IDs, cursors, credentials, and source bytes MUST live in the importing runtime's private SourceBinding store and never in this file.",
+      "items": { "$ref": "#/$defs/sourceRequirement" }
+    },
+    "evaluation": {
+      "$ref": "#/$defs/evaluationContract"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Free-form provenance. Not consumed by the runtime; useful for marketplace / debugging / attribution.",
+      "additionalProperties": true,
+      "properties": {
+        "sourceUrl": { "type": "string", "format": "uri" },
+        "sourceUserId": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "pricing": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["kind"],
+              "properties": { "kind": { "const": "free" } }
+            },
+            {
+              "type": "object",
+              "required": ["kind", "amountUsd"],
+              "properties": {
+                "kind": { "const": "one-time" },
+                "amountUsd": { "type": "number", "minimum": 0 }
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sourceRequirement": {
+      "type": "object",
+      "required": ["id", "label", "role", "kind", "required", "access"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,79}$",
+          "description": "Portable source role ID referenced by prompts, evidence, and evaluations. It is not a local/provider identifier."
+        },
+        "label": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "role": {
+          "enum": [
+            "knowledge",
+            "brain",
+            "working",
+            "template",
+            "inbox",
+            "output"
+          ]
+        },
+        "kind": {
+          "enum": ["file", "folder", "workspace", "klypix", "provider"]
+        },
+        "required": { "type": "boolean" },
+        "accepts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "extensions": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^\\.[A-Za-z0-9][A-Za-z0-9._+-]*$"
+              }
+            },
+            "mediaTypes": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "providerTypes": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "structure": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "required": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "description": "Required shape only, such as sheet/column names; never example rows or private values."
+            },
+            "optional": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "schema": {
+              "type": "object",
+              "description": "Declarative JSON Schema only; never executable validation code."
+            }
+          }
+        },
+        "freshness": {
+          "type": "object",
+          "required": ["mode", "onStale"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "enum": ["snapshot", "on-run", "watch"] },
+            "maxAgeSeconds": { "type": "integer", "minimum": 0 },
+            "onStale": { "enum": ["fail", "warn"] }
+          }
+        },
+        "truth": {
+          "type": "object",
+          "required": ["authority", "conflictPolicy", "citations"],
+          "additionalProperties": false,
+          "properties": {
+            "authority": {
+              "enum": ["authoritative", "supporting", "reference", "example"]
+            },
+            "priority": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "conflictPolicy": {
+              "enum": ["fail", "ask", "prefer-authority", "prefer-newer"]
+            },
+            "citations": { "enum": ["required", "preferred", "none"] }
+          }
+        },
+        "access": {
+          "type": "object",
+          "required": ["capabilities"],
+          "additionalProperties": false,
+          "properties": {
+            "capabilities": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "read",
+                  "list",
+                  "search",
+                  "cite",
+                  "sync",
+                  "watch",
+                  "write",
+                  "append",
+                  "create",
+                  "delete",
+                  "version"
+                ]
+              }
+            },
+            "boundaries": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "description": "Portable least-privilege boundaries, not private locators."
+            }
+          }
+        },
+        "approval": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "read": {
+              "enum": ["not-required", "on-bind", "every-run", "every-action"]
+            },
+            "write": {
+              "enum": ["not-required", "on-bind", "every-run", "every-action"]
+            },
+            "destructive": { "enum": ["forbidden", "every-action"] }
+          }
+        },
+        "sharing": {
+          "type": "object",
+          "required": ["strategy"],
+          "additionalProperties": false,
+          "properties": {
+            "strategy": { "enum": ["rebind", "exclude", "snapshot"] },
+            "derivedKnowledge": {
+              "enum": ["exclude", "approved-only", "include"]
+            },
+            "recipientMayOverride": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "evaluationContract": {
+      "type": "object",
+      "description": "Portable verify-before-deploy policy. Private fixtures and source values do not travel in the .agent file.",
+      "required": ["version", "failurePolicy", "checks"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "const": 1 },
+        "failurePolicy": { "enum": ["block", "require-approval", "warn"] },
+        "minimumScore": { "type": "number", "minimum": 0, "maximum": 1 },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "type", "phase", "severity"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+              "name": { "type": "string", "minLength": 1 },
+              "description": { "type": "string" },
+              "type": {
+                "enum": [
+                  "source-ready",
+                  "freshness",
+                  "citation",
+                  "output-schema",
+                  "write-boundary",
+                  "invariant",
+                  "custom"
+                ]
+              },
+              "phase": { "enum": ["bind", "pre-run", "post-run"] },
+              "severity": { "enum": ["error", "warning"] },
+              "sourceIds": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "assertion": {
+                "type": "string",
+                "description": "Declarative assertion only; runtimes MUST NOT execute it as code."
+              },
+              "config": { "type": "object" }
+            }
+          }
+        }
+      }
+    },
+    "toolReference": {
+      "oneOf": [
+        { "$ref": "#/$defs/builtinTool" },
+        { "$ref": "#/$defs/mcpTool" },
+        { "$ref": "#/$defs/webhookTool" },
+        { "$ref": "#/$defs/nangoTool" }
+      ]
+    },
+    "builtinTool": {
+      "type": "object",
+      "required": ["kind", "name"],
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "const": "builtin" },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Builtin tool id the runtime knows how to execute natively."
+        },
+        "description": { "type": "string" }
+      }
+    },
+    "mcpTool": {
+      "type": "object",
+      "required": ["kind", "name", "server", "requiresUserAuth"],
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "const": "mcp" },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Tool name as exposed to the LLM (e.g. 'gmail.send')."
+        },
+        "server": {
+          "type": "string",
+          "minLength": 1,
+          "description": "npm package or URL of the MCP server."
+        },
+        "scopes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "OAuth/permission scopes the server requests."
+        },
+        "requiresUserAuth": {
+          "type": "boolean",
+          "description": "If true, the runtime MUST resolve the user's credentials before invoking the tool."
+        },
+        "provider": {
+          "type": "string",
+          "description": "Provider key the credentials are stored under (e.g. 'google', 'github', 'slack')."
+        },
+        "description": { "type": "string" }
+      }
+    },
+    "webhookTool": {
+      "type": "object",
+      "required": ["kind", "name", "url"],
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "const": "webhook" },
+        "name": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "format": "uri" },
+        "method": { "enum": ["GET", "POST", "PUT", "DELETE"] },
+        "requiresUserAuth": { "type": "boolean" },
+        "description": { "type": "string" }
+      }
+    },
+    "nangoTool": {
+      "type": "object",
+      "required": ["kind", "name", "provider", "endpoint", "requiresUserAuth"],
+      "additionalProperties": true,
+      "properties": {
+        "kind": { "const": "nango" },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Tool name exposed to the LLM (e.g. 'outlook.list_messages')."
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Nango integration key configured in the operator's Nango admin UI (e.g. 'microsoft-outlook', 'notion', 'linear'). Also acts as the credential provider id."
+        },
+        "endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path relative to the provider's API base URL (Nango already knows the base). Example: '/me/messages' for Microsoft Graph."
+        },
+        "method": {
+          "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+          "description": "HTTP method; defaults to GET."
+        },
+        "scopes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "OAuth scopes the agent will exercise. Surfaced in the Connect UI."
+        },
+        "requiresUserAuth": {
+          "type": "boolean",
+          "description": "Always true in practice — Nango is only for authenticated APIs."
+        },
+        "description": { "type": "string" }
+      }
+    }
+  },
+  "examples": [
+    {
+      "$schema": "https://agentmug.com/schemas/agent.v1.json",
+      "id": "agent_voice_reminder_01",
+      "name": "Voice Reminder Capture",
+      "description": "Speak a voice memo via WhatsApp; the agent transcribes it and creates an iPhone reminder with the right date and priority.",
+      "version": "1.0.0",
+      "exportedAt": "2026-05-19T12:00:00Z",
+      "blueprint": {
+        "primaryModel": "claude-sonnet-4-6",
+        "systemPrompt": "You are a reminder assistant. Extract task, due date, and priority from the user's voice memo, then call create_reminder.",
+        "tools": ["create_reminder"]
+      },
+      "inputs": { "accepts": ["text", "audio"] },
+      "outputs": {
+        "shape": "text",
+        "description": "Confirmation of the reminder that was created."
+      },
+      "triggers": [
+        { "type": "manual" },
+        { "type": "webhook", "path": "/whatsapp/inbound" }
+      ],
+      "metadata": {
+        "tags": ["voice", "reminders"],
+        "pricing": { "kind": "free" }
+      }
+    }
+  ]
+}

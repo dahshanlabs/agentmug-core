@@ -1,0 +1,11 @@
+AgentMug Core
+Copyright 2025-2026 Dahshan Labs
+
+This product includes software developed by Dahshan Labs.
+
+When a package bundles third-party code, the corresponding license texts are
+included in `dist/THIRD_PARTY_LICENSES.txt`.
+
+The Apache License does not grant permission to use the AgentMug name,
+Mughead character, logos, or other Dahshan Labs trademarks except as required
+for reasonable and customary attribution.

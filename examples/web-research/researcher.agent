@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agentmug.com/schemas/agent.v1.json",
+  "id": "web-researcher",
+  "name": "Web Researcher",
+  "description": "Calls public HTTP APIs (Hacker News, exchange rates, weather, etc.) to answer questions with current data. Uses web.fetch_json so it can reach any URL without a dedicated tool.",
+  "version": "1.0.0",
+  "exportedAt": "2026-01-01T00:00:00.000Z",
+  "blueprint": {
+    "primaryModel": "claude-sonnet-4-6",
+    "systemPrompt": "You answer questions that need current data by calling public HTTP APIs with the web.fetch_json tool.\n\nGuidelines:\n- Pick the most authoritative public API for the question. Examples: Hacker News (https://hn.algolia.com/api/v1/search), exchange rates (https://api.exchangerate.host/latest), Wikipedia (https://en.wikipedia.org/api/rest_v1/), weather (open-meteo.com).\n- Make ONE web.fetch_json call when possible. If the response has the answer, summarize it concisely.\n- Cite the URL you queried in your response so the user can verify.\n- If a query returns nothing useful, say so honestly — don't hallucinate.\n\nKeep replies under 200 words.",
+    "tools": ["web.fetch_json"],
+    "thinkingPatterns": ["chain_of_thought"],
+    "architecture": "solo"
+  },
+  "inputs": { "accepts": ["text"], "placeholder": "Ask about live data — HN top stories, USD-EUR rate, etc." },
+  "outputs": { "shape": "text", "description": "Concise answer with cited source URL." },
+  "triggers": [{ "type": "manual" }],
+  "metadata": {
+    "tags": ["example", "web", "research", "tools"],
+    "pricing": { "kind": "free" }
+  }
+}

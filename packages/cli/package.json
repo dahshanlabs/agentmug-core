@@ -1,0 +1,60 @@
+{
+  "name": "@agentmug/cli",
+  "version": "0.7.0",
+  "description": "Run, inspect, and control AgentMug workers from the command line. Executes the same portable .agent file as the desktop app and cloud, against your own provider key.",
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "type": "module",
+  "bin": {
+    "agentmug": "./dist/index.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "tsx src/index.ts",
+    "test": "node --import tsx --test src/*.test.ts",
+    "prepack": "node ../../scripts/prepare-package-license.mjs",
+    "postpack": "node ../../scripts/prepare-package-license.mjs --clean",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@agentmug/runtime": "workspace:*",
+    "@anthropic-ai/sdk": "^0.78.0",
+    "exceljs": "4.4.0",
+    "mammoth": "1.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "esbuild": "0.27.3",
+    "tsx": "catalog:",
+    "typescript": "~5.9.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dahshanlabs/agentmug-core.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://agentmug.com",
+  "bugs": "https://github.com/dahshanlabs/agentmug-core/issues",
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "claude",
+    "anthropic",
+    "agentmug",
+    "automation",
+    "ai-worker",
+    "portable-agent"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

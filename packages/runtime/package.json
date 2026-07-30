@@ -1,0 +1,71 @@
+{
+  "name": "@agentmug/runtime",
+  "version": "0.14.0",
+  "description": "Runtime for defining and executing portable AI workers. Multi-provider LLM support (Anthropic, OpenAI, Gemini, and OpenAI-compatible vendors), pluggable persistence and tracing adapters, an MCP tool client, streaming, abort, and pause/resume.",
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "type": "module",
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "prepack": "node ../../scripts/prepare-package-license.mjs",
+    "postpack": "node ../../scripts/prepare-package-license.mjs --clean",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:artifact-contract": "node scripts/test-artifact-contract.mjs",
+    "test:engine-sources": "node scripts/test-engine-sources.mjs",
+    "test:source-contract": "node scripts/test-source-contract.mjs",
+    "test:net-guard": "node scripts/test-net-guard.mjs",
+    "test:llm-routing": "node scripts/test-llm-routing.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
+    "@google/genai": "^2.0.0",
+    "openai": "^6.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "esbuild": "0.27.3",
+    "typescript": "~5.9.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dahshanlabs/agentmug-core.git",
+    "directory": "packages/runtime"
+  },
+  "homepage": "https://agentmug.com",
+  "bugs": "https://github.com/dahshanlabs/agentmug-core/issues",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "anthropic",
+    "claude",
+    "openai",
+    "gemini",
+    "mcp",
+    "model-context-protocol",
+    "runtime",
+    "agentmug",
+    "ai-worker",
+    "portable-agent",
+    "digital-workforce"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

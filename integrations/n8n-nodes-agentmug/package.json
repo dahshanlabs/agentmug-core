@@ -1,0 +1,67 @@
+{
+  "name": "n8n-nodes-agentmug",
+  "version": "0.1.0",
+  "description": "Run your AgentMug workers from n8n — a portable AI worker as a node. Calls execute on your own connected-account credentials.",
+  "keywords": [
+    "n8n-community-node-package",
+    "agentmug",
+    "ai",
+    "agent",
+    "a2a",
+    "ai-worker"
+  ],
+  "license": "MIT",
+  "homepage": "https://agentmug.com",
+  "author": {
+    "name": "Dahshan Labs",
+    "email": "abdullah@dahshanlabs.com",
+    "url": "https://agentmug.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dahshanlabs/agentmug-core.git",
+    "directory": "integrations/n8n-nodes-agentmug"
+  },
+  "bugs": "https://github.com/dahshanlabs/agentmug-core/issues",
+  "engines": {
+    "node": ">=22.22.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "n8n-node build",
+    "build:watch": "tsc --watch",
+    "dev": "n8n-node dev",
+    "lint": "n8n-node lint",
+    "lint:fix": "n8n-node lint --fix",
+    "test": "node --test test/AgentMug.node.test.mjs",
+    "prepublishOnly": "n8n-node prerelease"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "strict": true,
+    "credentials": [
+      "dist/credentials/AgentMugApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/AgentMug/AgentMug.node.js"
+    ]
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  },
+  "devDependencies": {
+    "@n8n/node-cli": "0.41.2",
+    "eslint": "9.39.4",
+    "n8n-workflow": "2.31.3",
+    "prettier": "3.8.3",
+    "typescript": "5.9.3"
+  }
+}

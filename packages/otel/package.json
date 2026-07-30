@@ -1,0 +1,63 @@
+{
+  "name": "@agentmug/otel",
+  "version": "13.0.0",
+  "description": "OpenTelemetry-compatible tracing for AgentMug worker execution. Emits LLM-call and transcription spans/events into your existing OTel SDK pipeline (Honeycomb, Datadog, Jaeger, Tempo, Sentry).",
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "type": "module",
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "prepack": "node ../../scripts/prepare-package-license.mjs",
+    "postpack": "node ../../scripts/prepare-package-license.mjs --clean",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@agentmug/runtime": "^0.14.0",
+    "@opentelemetry/api": "^1.0.0"
+  },
+  "devDependencies": {
+    "@agentmug/runtime": "workspace:*",
+    "@opentelemetry/api": "^1.9.0",
+    "@types/node": "catalog:",
+    "esbuild": "0.27.3",
+    "typescript": "~5.9.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dahshanlabs/agentmug-core.git",
+    "directory": "packages/otel"
+  },
+  "homepage": "https://agentmug.com",
+  "bugs": "https://github.com/dahshanlabs/agentmug-core/issues",
+  "keywords": [
+    "ai",
+    "agent",
+    "agentmug",
+    "opentelemetry",
+    "otel",
+    "tracing",
+    "observability",
+    "honeycomb",
+    "datadog",
+    "ai-worker"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "initialLicenseChangeset": "apache-core-license.md",
+  "releasePackages": {
+    "@agentmug/runtime": {
+      "directory": "packages/runtime",
+      "firstApacheVersion": "0.15.0",
+      "initialLicenseReleaseType": "patch"
+    },
+    "@agentmug/cli": {
+      "directory": "packages/cli",
+      "firstApacheVersion": "0.8.0",
+      "initialLicenseReleaseType": "patch"
+    },
+    "@agentmug/mcp-bridge": {
+      "directory": "packages/mcp-bridge",
+      "firstApacheVersion": "0.3.0",
+      "initialLicenseReleaseType": "patch"
+    },
+    "@agentmug/otel": {
+      "directory": "packages/otel",
+      "firstApacheVersion": "14.0.0",
+      "initialLicenseReleaseType": "major"
+    }
+  },
+  "separateReleasePackages": {
+    "n8n-nodes-agentmug": {
+      "directory": "integrations/n8n-nodes-agentmug",
+      "workflow": ".github/workflows/release-n8n.yml"
+    }
+  }
+}

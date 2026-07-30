@@ -1,0 +1,3 @@
+# The n8n package follows @n8n/node-cli's canonical lint/format rules.
+# Validate it with `npm --prefix integrations/n8n-nodes-agentmug run lint`.
+integrations/n8n-nodes-agentmug/**

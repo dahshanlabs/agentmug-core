@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "overrides": {
+    "agent-base@6.0.2": {
+      "license": "MIT",
+      "file": "LICENSES/third-party/agent-base-6.0.2-MIT.txt",
+      "source": "https://github.com/TooTallNate/node-agent-base/tree/6.0.2#license",
+      "sha256": "38fcf0bf8ae7a48eb386a8c9d0ee8e3172e8cb98389bda9157a809f86d4372b0",
+      "reason": "The published npm tarball declares MIT but omits a license file."
+    },
+    "data-uri-to-buffer@4.0.1": {
+      "license": "MIT",
+      "file": "LICENSES/third-party/data-uri-to-buffer-4.0.1-MIT.txt",
+      "source": "https://github.com/TooTallNate/node-data-uri-to-buffer/tree/4.0.1#license",
+      "sha256": "c268052b98d0284789894dda490dfaef9fae0583b6d636fe088fe53e668ebf1c",
+      "reason": "The published npm tarball declares MIT but omits a license file."
+    },
+    "https-proxy-agent@5.0.1": {
+      "license": "MIT",
+      "file": "LICENSES/third-party/https-proxy-agent-5.0.1-MIT.txt",
+      "source": "https://github.com/TooTallNate/proxy-agents/tree/5.0.1#license",
+      "sha256": "38fcf0bf8ae7a48eb386a8c9d0ee8e3172e8cb98389bda9157a809f86d4372b0",
+      "reason": "The published npm tarball declares MIT but omits a license file."
+    },
+    "tr46@0.0.3": {
+      "license": "MIT",
+      "file": "LICENSES/third-party/tr46-0.0.3-MIT.txt",
+      "source": "https://github.com/jsdom/tr46/blob/main/LICENSE.md",
+      "sha256": "f692e6abf9d1bef703acbca70b037b6e1966f172b9ee062cd2fdca04e4c8c3bf",
+      "reason": "The published npm tarball declares MIT but omits a license file; this is the project's official license text."
+    }
+  }
+}

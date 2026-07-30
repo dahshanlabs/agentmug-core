@@ -1,0 +1,1276 @@
+name: Release packages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# The default token is read-only. Version-PR writes and npm OIDC are granted
+# only to the two jobs that need them; neither privilege exists while
+# third-party dependencies are installed, built, tested, or packed.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify and seal release candidates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      candidate_count: ${{ steps.candidates.outputs.count }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      capsule_sha256: ${{ steps.capsule.outputs.sha256 }}
+      source_sha: ${{ github.sha }}
+
+    steps:
+      - name: Checkout the immutable source commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Install n8n integration dependencies
+        working-directory: integrations/n8n-nodes-agentmug
+        run: npm ci --ignore-scripts
+
+      - name: Verify release candidate
+        run: pnpm run verify
+
+      - name: Pack exact version-change candidates
+        id: candidates
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          capsule="$RUNNER_TEMP/agentmug-release-capsule"
+          candidates="$capsule/candidates"
+          changelogs="$capsule/changelogs"
+          mkdir -p "$candidates" "$changelogs"
+          inventory="$capsule/CANDIDATES.json"
+          private_source_sha="$(
+            jq -er '
+              select(
+                .schemaVersion == 2
+                and .kind == "agentmug-public-core-staging"
+              )
+              | .sourceCommitSha
+            ' .agentmug-public-export
+          )"
+          public_manifest_sha256="$(
+            jq -er '.manifestSha256' .agentmug-public-export
+          )"
+          [[ "$private_source_sha" =~ ^[a-f0-9]{40}([a-f0-9]{24})?$ ]]
+          [[ "$public_manifest_sha256" =~ ^[a-f0-9]{64}$ ]]
+          test "$(
+            sha256sum PUBLIC_CORE_MANIFEST.json |
+              awk '{print $1}'
+          )" = "$public_manifest_sha256"
+          jq -e \
+            --arg source "$private_source_sha" '
+              .schemaVersion == 2
+              and .repository == "dahshanlabs/agentmug-core"
+              and .source.commitSha == $source
+            ' PUBLIC_CORE_MANIFEST.json >/dev/null
+          jq -n \
+            --arg sourceSha "$SOURCE_SHA" \
+            --arg privateSourceSha "$private_source_sha" \
+            --arg publicManifestSha256 "$public_manifest_sha256" '
+              {
+                schemaVersion: 1,
+                sourceSha: $sourceSha,
+                privateSourceSha: $privateSourceSha,
+                publicManifestSha256: $publicManifestSha256,
+                packages: []
+              }
+            ' \
+            > "$inventory"
+
+          include_every_package=false
+          if [[ "$EVENT_NAME" != "push" ]] ||
+             [[ ! "$BEFORE_SHA" =~ ^[a-f0-9]{40}$ ]] ||
+             [[ "$BEFORE_SHA" =~ ^0{40}$ ]]; then
+            include_every_package=true
+          fi
+
+          while IFS='|' read -r expected_name directory key; do
+            current_name="$(jq -r '.name' "$directory/package.json")"
+            current_version="$(jq -r '.version' "$directory/package.json")"
+            test "$current_name" = "$expected_name"
+            [[ "$current_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+              echo "Invalid candidate version for $expected_name: $current_version" >&2
+              exit 1
+            }
+
+            include="$include_every_package"
+            if [[ "$include" = false ]]; then
+              previous_manifest="$(
+                git show "$BEFORE_SHA:$directory/package.json" 2>/dev/null || true
+              )"
+              if [[ -z "$previous_manifest" ]]; then
+                include=true
+              else
+                previous_name="$(jq -r '.name' <<<"$previous_manifest")"
+                previous_version="$(jq -r '.version' <<<"$previous_manifest")"
+                test "$previous_name" = "$expected_name"
+                if [[ "$previous_version" != "$current_version" ]]; then
+                  include=true
+                fi
+              fi
+            fi
+            [[ "$include" = true ]] || continue
+
+            changelog_file=""
+            if [[ -f "$directory/CHANGELOG.md" ]] &&
+               grep -Fxq "## $current_version" "$directory/CHANGELOG.md"; then
+              changelog_file="changelogs/${key}.md"
+              awk -v heading="## $current_version" '
+                $0 == heading { found = 1; capture = 1 }
+                capture && $0 != heading && /^## / { exit }
+                capture { print }
+                END { if (!found) exit 42 }
+              ' "$directory/CHANGELOG.md" > "$capsule/$changelog_file"
+              test -s "$capsule/$changelog_file"
+            fi
+
+            report="$(
+              cd "$directory"
+              npm pack \
+                --json \
+                --pack-destination "$candidates"
+            )"
+            packed_name="$(jq -er '.[0].name' <<<"$report")"
+            packed_version="$(jq -er '.[0].version' <<<"$report")"
+            packed_file="$(basename "$(jq -er '.[0].filename' <<<"$report")")"
+            packed_integrity="$(jq -er '.[0].integrity' <<<"$report")"
+            test "$packed_name" = "$expected_name"
+            test "$packed_version" = "$current_version"
+            [[ "$packed_file" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*\.tgz$ ]]
+            [[ "$packed_integrity" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]]
+            test -f "$candidates/$packed_file"
+
+            packed_sha256="$(
+              sha256sum "$candidates/$packed_file" |
+                awk '{print $1}'
+            )"
+            next="$inventory.next"
+            jq \
+              --arg name "$expected_name" \
+              --arg version "$current_version" \
+              --arg key "$key" \
+              --arg file "$packed_file" \
+              --arg integrity "$packed_integrity" \
+              --arg sha256 "$packed_sha256" \
+              --arg changelogFile "$changelog_file" \
+              '.packages += [{
+                name: $name,
+                version: $version,
+                key: $key,
+                file: $file,
+                integrity: $integrity,
+                sha256: $sha256,
+                changelogFile: $changelogFile
+              }]' \
+              "$inventory" > "$next"
+            mv "$next" "$inventory"
+          done <<'PACKAGES'
+          @agentmug/runtime|packages/runtime|runtime
+          @agentmug/cli|packages/cli|cli
+          @agentmug/mcp-bridge|packages/mcp-bridge|mcp-bridge
+          @agentmug/otel|packages/otel|otel
+          PACKAGES
+
+          count="$(jq -er '.packages | length' "$inventory")"
+          actual_count="$(
+            find "$candidates" -maxdepth 1 -type f -name '*.tgz' |
+              wc -l |
+              tr -d ' '
+          )"
+          test "$actual_count" -eq "$count"
+          jq -e '
+            .schemaVersion == 1
+            and (.sourceSha | test("^[a-f0-9]{40}$"))
+            and ([.packages[].name] | length == (unique | length))
+            and ([.packages[].file] | length == (unique | length))
+          ' "$inventory" >/dev/null
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Seal candidates with a pinned npm client
+        id: capsule
+        if: steps.candidates.outputs.count != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          capsule="$RUNNER_TEMP/agentmug-release-capsule"
+          npm install \
+            --prefix "$capsule/npm-cli" \
+            --bin-links=false \
+            --ignore-scripts \
+            --no-audit \
+            --no-fund \
+            --save-exact \
+            npm@11.19.0
+          test "$(
+            node "$capsule/npm-cli/node_modules/npm/bin/npm-cli.js" --version
+          )" = "11.19.0"
+          cp scripts/guard-public-publish.mjs "$capsule/guard-public-publish.mjs"
+          cp .agentmug-public-export "$capsule/EXPORT_RECEIPT.json"
+          cp PUBLIC_CORE_MANIFEST.json "$capsule/PUBLIC_CORE_MANIFEST.json"
+          test -z "$(find "$capsule" -type l -print -quit)"
+
+          sums="$RUNNER_TEMP/agentmug-capsule-sha256sums"
+          (
+            cd "$capsule"
+            find . -type f -print0 |
+              sort -z |
+              xargs -0 sha256sum
+          ) > "$sums"
+          mv "$sums" "$capsule/CAPSULE_SHA256SUMS"
+
+          tar \
+            --sort=name \
+            --mtime='UTC 1970-01-01' \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            -C "$capsule" \
+            -cf release-capsule.tar \
+            .
+          digest="$(
+            sha256sum release-capsule.tar |
+              awk '{print $1}'
+          )"
+          printf '%s  %s\n' "$digest" release-capsule.tar \
+            > release-capsule.tar.sha256
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable verified release capsule
+        id: upload
+        if: steps.candidates.outputs.count != '0'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verified-npm-candidates-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            release-capsule.tar
+            release-capsule.tar.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  version:
+    name: Create or update the Changesets version PR
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      has_changesets: ${{ steps.changesets.outputs.hasChangesets }}
+
+    steps:
+      - name: Checkout the verified source commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # No package lifecycle script runs with the version-PR write token.
+      - name: Install versioning dependencies without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Create or update version PR
+        id: changesets
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        with:
+          version: pnpm run version-packages
+          commit: "chore: version packages"
+          title: "chore: version packages"
+          commitMode: github-api
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    name: Publish verified npm tarballs
+    needs: [verify, version]
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      needs.version.outputs.has_changesets == 'false' &&
+      needs.verify.outputs.candidate_count != '0' &&
+      vars.AGENTMUG_RELEASE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm-production
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      evidence_artifact_id: ${{ steps.upload-registry.outputs.artifact-id }}
+      evidence_artifact_digest: ${{ steps.upload-registry.outputs.artifact-digest }}
+      evidence_capsule_sha256: ${{ steps.seal-registry.outputs.sha256 }}
+
+    steps:
+      # Do not configure registry-url: that writes a token-oriented .npmrc.
+      - name: Provision Node.js for the pinned npm client
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      # Download by immutable artifact ID, never by a reusable artifact name.
+      - name: Download the verified release capsule
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.verify.outputs.artifact_id }}
+          path: .
+
+      - name: Verify and extract the release capsule
+        shell: bash
+        env:
+          EXPECTED_CAPSULE_SHA256: ${{ needs.verify.outputs.capsule_sha256 }}
+        run: |
+          set -euo pipefail
+          node_version="$(node --version)"
+          [[ "$node_version" =~ ^v22\. ]]
+          [[ "$EXPECTED_CAPSULE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          echo "$EXPECTED_CAPSULE_SHA256  release-capsule.tar" |
+            sha256sum --check --strict
+          test "$(awk '{print $1}' release-capsule.tar.sha256)" = \
+            "$EXPECTED_CAPSULE_SHA256"
+
+          while IFS= read -r entry; do
+            case "$entry" in
+              /*|../*|*/../*|*/..)
+                echo "Unsafe release capsule path: $entry" >&2
+                exit 1
+                ;;
+            esac
+          done < <(tar -tf release-capsule.tar)
+
+          mkdir capsule
+          tar -xf release-capsule.tar -C capsule
+          (
+            cd capsule
+            sha256sum --check --strict CAPSULE_SHA256SUMS
+          )
+
+      - name: Enforce protected OIDC-only publication
+        env:
+          AGENTMUG_PUBLIC_REPOSITORY: dahshanlabs/agentmug-core
+          AGENTMUG_RELEASE_ENABLED: ${{ vars.AGENTMUG_RELEASE_ENABLED }}
+          AGENTMUG_REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+          AGENTMUG_PUBLISH_ENVIRONMENT: npm-production
+          AGENTMUG_RELEASE_ARTIFACT_ID: ${{ needs.verify.outputs.artifact_id }}
+          AGENTMUG_RELEASE_ARTIFACT_SHA256: ${{ needs.verify.outputs.capsule_sha256 }}
+          AGENTMUG_RELEASE_SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+        run: node capsule/guard-public-publish.mjs
+
+      - name: Publish exact candidates with npm OIDC
+        id: publish-candidates
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+          NPM_CONFIG_PROVENANCE: "true"
+        run: |
+          set -euo pipefail
+
+          inventory="capsule/CANDIDATES.json"
+          npm_cli="capsule/npm-cli/node_modules/npm/bin/npm-cli.js"
+          test "$(node "$npm_cli" --version)" = "11.19.0"
+          jq -e \
+            --arg sourceSha "$SOURCE_SHA" '
+              .schemaVersion == 1
+              and .sourceSha == $sourceSha
+              and (.privateSourceSha | test("^[a-f0-9]{40}([a-f0-9]{24})?$"))
+              and (.publicManifestSha256 | test("^[a-f0-9]{64}$"))
+              and (.packages | length > 0)
+              and ([.packages[].name] | length == (unique | length))
+              and ([.packages[].file] | length == (unique | length))
+            ' "$inventory" >/dev/null
+          test "$(
+            sha256sum capsule/PUBLIC_CORE_MANIFEST.json |
+              awk '{print $1}'
+          )" = "$(
+            jq -r '.publicManifestSha256' "$inventory"
+          )"
+          jq -e \
+            --arg privateSourceSha "$(
+              jq -r '.privateSourceSha' "$inventory"
+            )" \
+            --arg manifestSha256 "$(
+              jq -r '.publicManifestSha256' "$inventory"
+            )" '
+              .schemaVersion == 2
+              and .kind == "agentmug-public-core-staging"
+              and .sourceCommitSha == $privateSourceSha
+              and .manifestSha256 == $manifestSha256
+            ' capsule/EXPORT_RECEIPT.json >/dev/null
+          jq -e \
+            --arg privateSourceSha "$(
+              jq -r '.privateSourceSha' "$inventory"
+            )" '
+              .schemaVersion == 2
+              and .repository == "dahshanlabs/agentmug-core"
+              and .source.commitSha == $privateSourceSha
+            ' capsule/PUBLIC_CORE_MANIFEST.json >/dev/null
+
+          unexpected="$(
+            jq -r '
+              .packages[]
+              | select(
+                  .name != "@agentmug/runtime"
+                  and .name != "@agentmug/cli"
+                  and .name != "@agentmug/mcp-bridge"
+                  and .name != "@agentmug/otel"
+                )
+              | .name
+            ' "$inventory"
+          )"
+          test -z "$unexpected" || {
+            echo "Unexpected package escaped the core release lane: $unexpected" >&2
+            exit 1
+          }
+
+          # Validate every candidate and release-note excerpt before the first
+          # irreversible registry mutation. The publication loop repeats these
+          # checks so reruns remain independently auditable.
+          while IFS= read -r candidate; do
+            version="$(jq -r '.version' <<<"$candidate")"
+            file="$(jq -r '.file' <<<"$candidate")"
+            expected_integrity="$(jq -r '.integrity' <<<"$candidate")"
+            expected_sha256="$(jq -r '.sha256' <<<"$candidate")"
+            changelog_file="$(jq -r '.changelogFile // empty' <<<"$candidate")"
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            [[ "$file" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*\.tgz$ ]]
+            [[ "$expected_integrity" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]]
+            [[ "$expected_sha256" =~ ^[a-f0-9]{64}$ ]]
+            [[ "$changelog_file" =~ ^changelogs/[a-z0-9-]+\.md$ ]]
+            tarball="capsule/candidates/$file"
+            changelog="capsule/$changelog_file"
+            test -f "$tarball"
+            test -s "$changelog"
+            test "$(head -n 1 "$changelog")" = "## $version"
+            test "$(
+              sha256sum "$tarball" |
+                awk '{print $1}'
+            )" = "$expected_sha256"
+            actual_integrity="sha512-$(
+              openssl dgst -sha512 -binary "$tarball" |
+                openssl base64 -A
+            )"
+            test "$actual_integrity" = "$expected_integrity"
+          done < <(jq -c '.packages[]' "$inventory")
+
+          mkdir -p release
+          cp capsule/EXPORT_RECEIPT.json release/EXPORT_RECEIPT.json
+          cp capsule/PUBLIC_CORE_MANIFEST.json release/PUBLIC_CORE_MANIFEST.json
+          mkdir -p release/changelogs
+          released='[]'
+          newly_published='[]'
+          statuses='[]'
+
+          while IFS= read -r candidate; do
+            name="$(jq -r '.name' <<<"$candidate")"
+            version="$(jq -r '.version' <<<"$candidate")"
+            file="$(jq -r '.file' <<<"$candidate")"
+            expected_integrity="$(jq -r '.integrity' <<<"$candidate")"
+            expected_sha256="$(jq -r '.sha256' <<<"$candidate")"
+            changelog_file="$(jq -r '.changelogFile // empty' <<<"$candidate")"
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            [[ "$file" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*\.tgz$ ]]
+            [[ "$expected_integrity" =~ ^sha512-[A-Za-z0-9+/]+={0,2}$ ]]
+            [[ "$expected_sha256" =~ ^[a-f0-9]{64}$ ]]
+            [[ "$changelog_file" =~ ^changelogs/[a-z0-9-]+\.md$ ]]
+            changelog="capsule/$changelog_file"
+            test -s "$changelog"
+            test "$(head -n 1 "$changelog")" = "## $version"
+            cp "$changelog" "release/$changelog_file"
+            tarball="capsule/candidates/$file"
+            test -f "$tarball"
+            test "$(
+              sha256sum "$tarball" |
+                awk '{print $1}'
+            )" = "$expected_sha256"
+            actual_integrity="sha512-$(
+              openssl dgst -sha512 -binary "$tarball" |
+                openssl base64 -A
+            )"
+            test "$actual_integrity" = "$expected_integrity"
+
+            spec="${name}@${version}"
+            status=published
+            if registry_json="$(
+              node "$npm_cli" view "$spec" dist.integrity --json 2>/dev/null
+            )"; then
+              registry_integrity="$(
+                jq -er 'select(type == "string" and length > 0)' \
+                  <<<"$registry_json"
+              )"
+              test "$registry_integrity" = "$expected_integrity" || {
+                echo "Registry already contains different bytes for $spec" >&2
+                exit 1
+              }
+              status=already-published
+            else
+              node "$npm_cli" publish "$tarball" --access public --provenance
+              newly_published="$(
+                jq \
+                  --arg name "$name" \
+                  --arg version "$version" \
+                  '. + [{name: $name, version: $version}]' \
+                  <<<"$newly_published"
+              )"
+            fi
+
+            registry_integrity=""
+            for attempt in 1 2 3 4 5 6 7 8; do
+              if registry_json="$(
+                node "$npm_cli" view "$spec" dist.integrity --json 2>/dev/null
+              )"; then
+                registry_integrity="$(
+                  jq -r 'select(type == "string")' <<<"$registry_json"
+                )"
+                [[ "$registry_integrity" = "$expected_integrity" ]] && break
+              fi
+              sleep "$((attempt * 2))"
+            done
+            test "$registry_integrity" = "$expected_integrity" || {
+              echo "Registry did not converge to the verified bytes for $spec" >&2
+              exit 1
+            }
+            time_json="$(node "$npm_cli" view "$spec" time --json)"
+            published_at="$(
+              jq -er \
+                --arg version "$version" \
+                '.[$version] | select(type == "string" and length > 0)' \
+                <<<"$time_json"
+            )"
+            [[ "$published_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]]
+
+            released="$(
+              jq \
+                --arg name "$name" \
+                --arg version "$version" \
+                --arg publishedAt "$published_at" \
+                '. + [{
+                  name: $name,
+                  version: $version,
+                  publishedAt: $publishedAt
+                }]' \
+                <<<"$released"
+            )"
+            statuses="$(
+              jq \
+                --arg name "$name" \
+                --arg version "$version" \
+                --arg status "$status" \
+                '. + [{name: $name, version: $version, status: $status}]' \
+                <<<"$statuses"
+            )"
+          done < <(jq -c '.packages[]' "$inventory")
+
+          jq -S '.' <<<"$released" > release/PUBLISHED.json
+          jq -S '.' <<<"$statuses" > release/PUBLISH_STATUS.json
+          published_count="$(jq 'length' <<<"$newly_published")"
+          if [[ "$published_count" -gt 0 ]]; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "publishedPackages=$(jq -c '.' <<<"$released")" \
+            >> "$GITHUB_OUTPUT"
+          echo "newlyPublishedPackages=$(jq -c '.' <<<"$newly_published")" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Fetch and verify exact npm registry tarballs
+        shell: bash
+        env:
+          PUBLISHED: ${{ steps.publish-candidates.outputs.publishedPackages }}
+        run: |
+          set -euo pipefail
+          mkdir -p release/tarballs release/sbom
+          test "$(jq -cS '.' release/PUBLISHED.json)" = \
+            "$(jq -cS '.' <<<"$PUBLISHED")"
+
+          npm_cli="capsule/npm-cli/node_modules/npm/bin/npm-cli.js"
+          jq -r '.[] | [.name, .version] | @tsv' release/PUBLISHED.json |
+          while IFS=$'\t' read -r name version; do
+            case "$name" in
+              @agentmug/runtime) key=runtime ;;
+              @agentmug/cli) key=cli ;;
+              @agentmug/mcp-bridge) key=mcp-bridge ;;
+              @agentmug/otel) key=otel ;;
+              *) exit 1 ;;
+            esac
+
+            candidate="$(
+              jq -cer \
+                --arg name "$name" \
+                --arg version "$version" '
+                  .packages[]
+                  | select(.name == $name and .version == $version)
+                ' \
+                capsule/CANDIDATES.json
+            )"
+            expected_sha256="$(jq -r '.sha256' <<<"$candidate")"
+            expected_integrity="$(jq -r '.integrity' <<<"$candidate")"
+            spec="${name}@${version}"
+            url="$(node "$npm_cli" view "$spec" dist.tarball)"
+            integrity="$(node "$npm_cli" view "$spec" dist.integrity)"
+            test "$integrity" = "$expected_integrity"
+            case "$url" in
+              https://registry.npmjs.org/*) ;;
+              *)
+                echo "Unexpected registry tarball URL for $spec: $url" >&2
+                exit 1
+                ;;
+            esac
+
+            output="release/tarballs/${key}-${version}.tgz"
+            curl --proto '=https' --tlsv1.2 --fail --location \
+              --retry 5 --retry-all-errors "$url" -o "$output"
+
+            actual_sha256="$(
+              sha256sum "$output" |
+                awk '{print $1}'
+            )"
+            test "$actual_sha256" = "$expected_sha256" || {
+              echo "Registry tarball differs from sealed candidate for $spec" >&2
+              exit 1
+            }
+
+            algorithm="${integrity%%-*}"
+            expected="${integrity#*-}"
+            case "$algorithm" in
+              sha256|sha384|sha512) ;;
+              *)
+                echo "Unsupported npm integrity algorithm for $spec" >&2
+                exit 1
+                ;;
+            esac
+            actual="$(
+              openssl dgst "-$algorithm" -binary "$output" |
+                openssl base64 -A
+            )"
+            test "$actual" = "$expected" || {
+              echo "npm integrity mismatch for $spec" >&2
+              exit 1
+            }
+          done
+
+          expected_count="$(jq 'length' release/PUBLISHED.json)"
+          actual_count="$(
+            find release/tarballs -maxdepth 1 -type f -name '*.tgz' |
+              wc -l |
+              tr -d ' '
+          )"
+          test "$expected_count" -gt 0
+          test "$actual_count" -eq "$expected_count"
+          (
+            cd release/tarballs
+            sha256sum ./*.tgz | sort -k2
+          ) > release/SHA256SUMS
+
+      - name: Seal exact registry evidence for the attestation job
+        id: seal-registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s release/PUBLISHED.json
+          test -s release/PUBLISH_STATUS.json
+          test -s release/SHA256SUMS
+          tar \
+            --sort=name \
+            --mtime='UTC 1970-01-01' \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            -cf registry-release-capsule.tar \
+            release
+          digest="$(
+            sha256sum registry-release-capsule.tar |
+              awk '{print $1}'
+          )"
+          printf '%s  %s\n' "$digest" registry-release-capsule.tar \
+            > registry-release-capsule.tar.sha256
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable exact-registry evidence
+        id: upload-registry
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: exact-npm-registry-tarballs-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            registry-release-capsule.tar
+            registry-release-capsule.tar.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  sbom:
+    name: Generate and seal SBOM evidence
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      evidence_artifact_id: ${{ steps.upload-evidence.outputs.artifact-id }}
+      evidence_artifact_digest: ${{ steps.upload-evidence.outputs.artifact-digest }}
+
+    steps:
+      - name: Download exact registry evidence by immutable artifact ID
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.publish.outputs.evidence_artifact_id }}
+          path: .
+
+      - name: Verify and extract exact registry evidence
+        shell: bash
+        env:
+          EXPECTED_CAPSULE_SHA256: ${{ needs.publish.outputs.evidence_capsule_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_CAPSULE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          echo "$EXPECTED_CAPSULE_SHA256  registry-release-capsule.tar" |
+            sha256sum --check --strict
+          test "$(awk '{print $1}' registry-release-capsule.tar.sha256)" = \
+            "$EXPECTED_CAPSULE_SHA256"
+          while IFS= read -r entry; do
+            case "$entry" in
+              /*|../*|*/../*|*/..)
+                echo "Unsafe registry capsule path: $entry" >&2
+                exit 1
+                ;;
+            esac
+          done < <(tar -tf registry-release-capsule.tar)
+          tar -xf registry-release-capsule.tar
+          (
+            cd release/tarballs
+            sha256sum --check --strict ../SHA256SUMS
+          )
+
+      - name: Install pinned Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          syft-version: v1.50.0
+
+      - name: Generate one SPDX SBOM per exact npm tarball
+        shell: bash
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for tgz in release/tarballs/*.tgz; do
+            filename="$(basename "$tgz")"
+            case "$filename" in
+              runtime-*)
+                key=runtime
+                package_name=@agentmug/runtime
+                ;;
+              cli-*)
+                key=cli
+                package_name=@agentmug/cli
+                ;;
+              mcp-bridge-*)
+                key=mcp-bridge
+                package_name=@agentmug/mcp-bridge
+                ;;
+              otel-*)
+                key=otel
+                package_name=@agentmug/otel
+                ;;
+              *)
+                echo "Unexpected release tarball: $filename" >&2
+                exit 1
+                ;;
+            esac
+            test ! -e "release/sbom/${key}.spdx.json"
+            published_at="$(
+              jq -er \
+                --arg name "$package_name" '
+                  [.[] | select(.name == $name)] |
+                  select(length == 1) |
+                  .[0].publishedAt
+                ' \
+                release/PUBLISHED.json
+            )"
+            [[ "$published_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]]
+            tarball_sha256="$(
+              sha256sum "$tgz" |
+                awk '{print $1}'
+            )"
+            namespace="https://agentmug.com/sbom/${key}/${tarball_sha256}"
+
+            for pass in first second; do
+              raw="$RUNNER_TEMP/${key}-${pass}.raw.spdx.json"
+              normalized="$RUNNER_TEMP/${key}-${pass}.spdx.json"
+              "$SYFT" "file:$tgz" --output "spdx-json=$raw"
+              jq -S \
+                --arg namespace "$namespace" \
+                --arg created "$published_at" '
+                  .documentNamespace = $namespace |
+                  .creationInfo.created = $created
+                ' \
+              "$raw" > "$normalized"
+              rm -f "$raw"
+              if [[ "$pass" = first ]]; then
+                sleep 1
+              fi
+            done
+            cmp --silent \
+              "$RUNNER_TEMP/${key}-first.spdx.json" \
+              "$RUNNER_TEMP/${key}-second.spdx.json"
+            mv \
+              "$RUNNER_TEMP/${key}-first.spdx.json" \
+              "release/sbom/${key}.spdx.json"
+            rm -f "$RUNNER_TEMP/${key}-second.spdx.json"
+          done
+
+      - name: Seal the complete release evidence set
+        shell: bash
+        run: |
+          set -euo pipefail
+          sums="$RUNNER_TEMP/agentmug-release-evidence-sha256sums"
+          (
+            cd release
+            find . -type f -print0 |
+              sort -z |
+              xargs -0 sha256sum
+          ) > "$sums"
+          mv "$sums" release/EVIDENCE_SHA256SUMS
+
+      - name: Preserve npm release evidence
+        id: upload-evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-release-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 90
+
+  attest:
+    name: Attest sealed registry and SBOM evidence
+    needs: sbom
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # This privileged job only verifies already-sealed evidence. It never
+    # installs tools, executes package code, or parses an npm archive.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+      - name: Download sealed evidence by immutable artifact ID
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.sbom.outputs.evidence_artifact_id }}
+          path: release
+
+      - name: Verify sealed evidence
+        shell: bash
+        env:
+          EXPECTED_ARTIFACT_DIGEST: ${{ needs.sbom.outputs.evidence_artifact_digest }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_ARTIFACT_DIGEST" =~ ^[a-f0-9]{64}$ ]]
+          (
+            cd release
+            sha256sum --check --strict EVIDENCE_SHA256SUMS
+          )
+
+      - name: Attest exact npm tarball provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-checksums: release/SHA256SUMS
+
+      - name: Attest runtime SBOM
+        if: hashFiles('release/tarballs/runtime-*.tgz') != ''
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: release/tarballs/runtime-*.tgz
+          sbom-path: release/sbom/runtime.spdx.json
+
+      - name: Attest CLI SBOM
+        if: hashFiles('release/tarballs/cli-*.tgz') != ''
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: release/tarballs/cli-*.tgz
+          sbom-path: release/sbom/cli.spdx.json
+
+      - name: Attest MCP bridge SBOM
+        if: hashFiles('release/tarballs/mcp-bridge-*.tgz') != ''
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: release/tarballs/mcp-bridge-*.tgz
+          sbom-path: release/sbom/mcp-bridge.spdx.json
+
+      - name: Attest OpenTelemetry adapter SBOM
+        if: hashFiles('release/tarballs/otel-*.tgz') != ''
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: release/tarballs/otel-*.tgz
+          sbom-path: release/sbom/otel.spdx.json
+
+  metadata:
+    name: Publish immutable GitHub package releases
+    needs: [verify, publish, sbom, attest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Release metadata can write tags/releases, but cannot mint npm or
+    # attestation OIDC identities and is not in the npm-production environment.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download complete evidence by immutable artifact ID
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.sbom.outputs.evidence_artifact_id }}
+          path: release
+
+      - name: Verify evidence and publish Changesets-style releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          gh --version
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          (
+            cd release
+            sha256sum --check --strict EVIDENCE_SHA256SUMS
+          )
+          private_source_sha="$(
+            jq -er '
+              select(
+                .schemaVersion == 2
+                and .kind == "agentmug-public-core-staging"
+              )
+              | .sourceCommitSha
+            ' release/EXPORT_RECEIPT.json
+          )"
+          public_manifest_sha256="$(
+            jq -er '.manifestSha256' release/EXPORT_RECEIPT.json
+          )"
+          [[ "$private_source_sha" =~ ^[a-f0-9]{40}([a-f0-9]{24})?$ ]]
+          [[ "$public_manifest_sha256" =~ ^[a-f0-9]{64}$ ]]
+          test "$(
+            sha256sum release/PUBLIC_CORE_MANIFEST.json |
+              awk '{print $1}'
+          )" = "$public_manifest_sha256"
+          jq -e \
+            --arg source "$private_source_sha" '
+              .schemaVersion == 2
+              and .repository == "dahshanlabs/agentmug-core"
+              and .source.commitSha == $source
+            ' release/PUBLIC_CORE_MANIFEST.json >/dev/null
+
+          resolve_tag_sha() {
+            local encoded_tag="$1"
+            local object type sha
+            object="$(
+              gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$encoded_tag"
+            )"
+            type="$(jq -r '.object.type' <<<"$object")"
+            sha="$(jq -r '.object.sha' <<<"$object")"
+            for _ in 1 2 3 4; do
+              [[ "$type" = tag ]] || break
+              object="$(
+                gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha"
+              )"
+              type="$(jq -r '.object.type' <<<"$object")"
+              sha="$(jq -r '.object.sha' <<<"$object")"
+            done
+            test "$type" = commit
+            printf '%s' "$sha"
+          }
+
+          ensure_asset() {
+            local tag="$1"
+            local source="$2"
+            local is_draft="$3"
+            local name existing
+            name="$(basename "$source")"
+            existing="$RUNNER_TEMP/existing-release-asset"
+            rm -f "$existing"
+            if gh release view "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json assets \
+              --jq '.assets[].name' |
+              grep -Fqx "$name"; then
+              gh release download "$tag" \
+                --repo "$GITHUB_REPOSITORY" \
+                --pattern "$name" \
+                --output "$existing"
+              cmp --silent "$source" "$existing" || {
+                echo "Existing release asset differs: $tag / $name" >&2
+                exit 1
+              }
+            else
+              test "$is_draft" = true || {
+                echo "Published release is missing required asset: $tag / $name" >&2
+                exit 1
+              }
+              gh release upload "$tag" "$source" \
+                --repo "$GITHUB_REPOSITORY"
+            fi
+          }
+
+          verify_exact_asset_names() {
+            local tag="$1"
+            shift
+            local expected actual source
+            expected="$RUNNER_TEMP/expected-release-assets"
+            actual="$RUNNER_TEMP/actual-release-assets"
+            : > "$expected"
+            for source in "$@"; do
+              basename "$source" >> "$expected"
+            done
+            sort -o "$expected" "$expected"
+            gh release view "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json assets \
+              --jq '.assets[].name' |
+              sort > "$actual"
+            cmp --silent "$expected" "$actual" || {
+              echo "Release assets are not the exact expected set: $tag" >&2
+              diff --unified "$expected" "$actual" >&2 || true
+              exit 1
+            }
+          }
+
+          while IFS= read -r published; do
+            name="$(jq -r '.name' <<<"$published")"
+            version="$(jq -r '.version' <<<"$published")"
+            published_at="$(jq -r '.publishedAt' <<<"$published")"
+            [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            [[ "$published_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]]
+            tag="${name}@${version}"
+            encoded_tag="$(
+              jq -rn --arg tag "$tag" '$tag | @uri'
+            )"
+            case "$name" in
+              @agentmug/runtime)
+                key=runtime
+                ;;
+              @agentmug/cli)
+                key=cli
+                ;;
+              @agentmug/mcp-bridge)
+                key=mcp-bridge
+                ;;
+              @agentmug/otel)
+                key=otel
+                ;;
+              *) exit 1 ;;
+            esac
+
+            tarball="release/tarballs/${key}-${version}.tgz"
+            sbom_source="release/sbom/${key}.spdx.json"
+            sbom="release/${key}-${version}.spdx.json"
+            evidence="release/${key}-${version}-release-evidence.json"
+            checksums="release/${key}-${version}-SHA256SUMS.txt"
+            notes="$RUNNER_TEMP/${key}-${version}-notes.md"
+            test -f "$tarball"
+            test -f "$sbom_source"
+            cp "$sbom_source" "$sbom"
+            cp "release/changelogs/${key}.md" "$notes"
+            test "$(head -n 1 "$notes")" = "## $version"
+            cat >> "$notes" <<NOTES
+
+          ---
+
+          npm: https://www.npmjs.com/package/${name}/v/${version}
+          Public source commit: ${SOURCE_SHA}
+          Private source commit: ${private_source_sha}
+          Public manifest SHA-256: ${public_manifest_sha256}
+          NOTES
+
+            tarball_sha256="$(
+              sha256sum "$tarball" |
+                awk '{print $1}'
+            )"
+            sbom_sha256="$(
+              sha256sum "$sbom" |
+                awk '{print $1}'
+            )"
+            jq -n \
+              --arg name "$name" \
+              --arg version "$version" \
+              --arg publicSourceSha "$SOURCE_SHA" \
+              --arg publishedAt "$published_at" \
+              --arg privateSourceSha "$private_source_sha" \
+              --arg publicManifestSha256 "$public_manifest_sha256" \
+              --arg tarball "$(basename "$tarball")" \
+              --arg tarballSha256 "$tarball_sha256" \
+              --arg sbom "$(basename "$sbom")" \
+              --arg sbomSha256 "$sbom_sha256" \
+              '
+                {
+                  schemaVersion: 1,
+                  package: $name,
+                  version: $version,
+                  source: {
+                    publicCommitSha: $publicSourceSha,
+                    privateCommitSha: $privateSourceSha,
+                    publicManifestSha256: $publicManifestSha256
+                  },
+                  registry: {
+                    publishedAt: $publishedAt
+                  },
+                  npmTarball: {
+                    file: $tarball,
+                    sha256: $tarballSha256
+                  },
+                  spdxSbom: {
+                    file: $sbom,
+                    sha256: $sbomSha256
+                  }
+                }
+              ' > "$evidence"
+            evidence_sha256="$(
+              sha256sum "$evidence" |
+                awk '{print $1}'
+            )"
+            printf '%s  %s\n' \
+              "$tarball_sha256" "$(basename "$tarball")" \
+              "$sbom_sha256" "$(basename "$sbom")" \
+              "$evidence_sha256" "$(basename "$evidence")" \
+              > "$checksums"
+
+            tag_exists=false
+            if gh api \
+              "repos/$GITHUB_REPOSITORY/git/ref/tags/$encoded_tag" \
+              >/dev/null 2>&1; then
+              tag_exists=true
+              tag_sha="$(resolve_tag_sha "$encoded_tag")"
+              test "$tag_sha" = "$SOURCE_SHA" || {
+                echo "Existing tag points to $tag_sha, expected $SOURCE_SHA: $tag" >&2
+                exit 1
+              }
+            fi
+
+            release_exists=false
+            release_json=""
+            if release_json="$(
+              gh api \
+                "repos/$GITHUB_REPOSITORY/releases/tags/$encoded_tag" \
+                2>/dev/null
+            )"; then
+              release_exists=true
+              target="$(jq -r '.target_commitish' <<<"$release_json")"
+              release_title="$(jq -r '.name' <<<"$release_json")"
+              release_body="$(jq -r '.body // ""' <<<"$release_json")"
+              release_prerelease="$(jq -r '.prerelease' <<<"$release_json")"
+              expected_body="$(cat "$notes")"
+              test "$release_title" = "$tag" || {
+                echo "Existing release title differs for $tag" >&2
+                exit 1
+              }
+              test "$release_body" = "$expected_body" || {
+                echo "Existing release notes differ for $tag" >&2
+                exit 1
+              }
+              test "$release_prerelease" = false || {
+                echo "Existing release prerelease state differs for $tag" >&2
+                exit 1
+              }
+              if [[ "$tag_exists" = false && "$target" != "$SOURCE_SHA" ]]; then
+                echo "Existing draft targets $target, expected $SOURCE_SHA: $tag" >&2
+                exit 1
+              fi
+            fi
+
+            if [[ "$release_exists" = false ]]; then
+              gh release create "$tag" \
+                --repo "$GITHUB_REPOSITORY" \
+                --target "$SOURCE_SHA" \
+                --title "$tag" \
+                --notes-file "$notes" \
+                --draft
+            fi
+
+            is_draft="$(
+              gh release view "$tag" \
+                --repo "$GITHUB_REPOSITORY" \
+                --json isDraft \
+                --jq '.isDraft'
+            )"
+            ensure_asset "$tag" "$tarball" "$is_draft"
+            ensure_asset "$tag" "$sbom" "$is_draft"
+            ensure_asset "$tag" "$checksums" "$is_draft"
+            ensure_asset "$tag" "$evidence" "$is_draft"
+            verify_exact_asset_names \
+              "$tag" \
+              "$tarball" \
+              "$sbom" \
+              "$checksums" \
+              "$evidence"
+
+            if [[ "$is_draft" = true ]]; then
+              gh release edit "$tag" \
+                --repo "$GITHUB_REPOSITORY" \
+                --draft=false \
+                --latest=false
+            fi
+            published_release=""
+            for attempt in {1..10}; do
+              published_release="$(
+                gh api \
+                  "repos/$GITHUB_REPOSITORY/releases/tags/$encoded_tag"
+              )"
+              if [[ "$(jq -r '.draft' <<<"$published_release")" = false ]] &&
+                 [[ "$(jq -r '.immutable' <<<"$published_release")" = true ]]; then
+                break
+              fi
+              test "$attempt" -lt 10
+              sleep 2
+            done
+            test "$(jq -r '.draft' <<<"$published_release")" = false
+            test "$(jq -r '.immutable' <<<"$published_release")" = true || {
+              echo "GitHub release immutability is not enforced for $tag" >&2
+              exit 1
+            }
+            verify_exact_asset_names \
+              "$tag" \
+              "$tarball" \
+              "$sbom" \
+              "$checksums" \
+              "$evidence"
+            test "$(resolve_tag_sha "$encoded_tag")" = "$SOURCE_SHA"
+          done < <(jq -c '.[]' release/PUBLISHED.json)

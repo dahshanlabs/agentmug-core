@@ -1,0 +1,826 @@
+name: Release n8n integration
+
+on:
+  push:
+    tags:
+      - "n8n-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "First version to publish (must match package.json)"
+        required: true
+        type: string
+      confirmation:
+        description: "Type: PUBLISH n8n-nodes-agentmug@<version>"
+        required: true
+        type: string
+
+concurrency:
+  group: release-n8n-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify and seal candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      capsule_sha256: ${{ steps.seal.outputs.sha256 }}
+      name: ${{ steps.identity.outputs.name }}
+      version: ${{ steps.identity.outputs.version }}
+      source_sha: ${{ github.sha }}
+
+    steps:
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.22.2
+
+      - name: Install dependencies without lifecycle scripts
+        working-directory: integrations/n8n-nodes-agentmug
+        run: npm ci --ignore-scripts
+
+      - name: Verify release identity
+        id: identity
+        working-directory: integrations/n8n-nodes-agentmug
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_VERSION: ${{ inputs.version }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+          RELEASE_ENABLED: ${{ vars.AGENTMUG_RELEASE_ENABLED }}
+        run: |
+          set -euo pipefail
+          name="$(node --print "require('./package.json').name")"
+          version="$(node --print "require('./package.json').version")"
+          license="$(node --print "require('./package.json').license")"
+          repository="$(node --print "require('./package.json').repository.url")"
+
+          test "$REPOSITORY" = "dahshanlabs/agentmug-core"
+          test "$REPOSITORY_VISIBILITY" = "public"
+          test "$RELEASE_ENABLED" = "true"
+          test "$name" = "n8n-nodes-agentmug"
+          test "$license" = "MIT"
+          test "$repository" = "https://github.com/dahshanlabs/agentmug-core.git"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          cmp LICENSE ../../LICENSES/MIT.txt
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            test "$GITHUB_REF" = "refs/heads/main"
+            test "$GITHUB_REF_PROTECTED" = "true"
+            test "$version" = "0.1.0"
+            test "$DISPATCH_VERSION" = "$version"
+            test "$CONFIRMATION" = "PUBLISH ${name}@${version}"
+          else
+            test "$GITHUB_REF_TYPE" = "tag"
+            test "$GITHUB_REF_PROTECTED" = "true"
+            test "$GITHUB_REF_NAME" = "n8n-v${version}"
+            git show-ref --verify --quiet refs/remotes/origin/main
+            git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
+            if ! npm view "$name" version >/dev/null 2>&1; then
+              echo "Package does not exist. Complete the one-time bootstrap first." >&2
+              exit 1
+            fi
+          fi
+
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Verify with official n8n tooling
+        working-directory: integrations/n8n-nodes-agentmug
+        run: |
+          npm audit --omit=dev --audit-level=moderate
+          npm run lint
+          npm run build
+          npm test
+
+      - name: Pack and inspect candidate
+        working-directory: integrations/n8n-nodes-agentmug
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_dir="../../../release-candidate/package"
+          mkdir -p "$candidate_dir"
+          pack_json="$(npm pack --json --ignore-scripts --pack-destination "$candidate_dir")"
+          tarball="$(jq -er '.[0].filename' <<<"$pack_json")"
+          tarball="$candidate_dir/$(basename "$tarball")"
+          test -f "$tarball"
+
+          tar -tzf "$tarball" | sort > ../../../release-candidate/package-files.txt
+          grep -Fxq package/LICENSE ../../../release-candidate/package-files.txt
+          grep -Fxq package/README.md ../../../release-candidate/package-files.txt
+          grep -Fxq package/dist/icons/agentmug.svg ../../../release-candidate/package-files.txt
+          grep -Fxq package/dist/icons/agentmug.dark.svg ../../../release-candidate/package-files.txt
+          grep -Fxq package/dist/credentials/AgentMugApi.credentials.js ../../../release-candidate/package-files.txt
+          grep -Fxq package/dist/nodes/AgentMug/AgentMug.node.js ../../../release-candidate/package-files.txt
+          if grep -Eq '(^|/)node_modules/|^package/(credentials|nodes)/.*\.ts$' ../../../release-candidate/package-files.txt; then
+            echo "Source or dependency files escaped into the npm tarball." >&2
+            exit 1
+          fi
+
+      - name: Bundle pinned npm client without lifecycle scripts
+        run: |
+          npm install \
+            --prefix release-candidate/npm-cli \
+            --ignore-scripts \
+            --no-package-lock \
+            --no-save \
+            npm@11.19.0
+          test "$(
+            node release-candidate/npm-cli/node_modules/npm/bin/npm-cli.js --version
+          )" = "11.19.0"
+          rm -rf release-candidate/npm-cli/node_modules/.bin
+          if find release-candidate -type l -print -quit | grep -q .; then
+            echo "Symlinks are forbidden in the sealed release capsule." >&2
+            exit 1
+          fi
+
+      - name: Seal release capsule
+        id: seal
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.identity.outputs.name }}
+          PACKAGE_VERSION: ${{ steps.identity.outputs.version }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg name "$PACKAGE_NAME" \
+            --arg version "$PACKAGE_VERSION" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg sourceSha "$GITHUB_SHA" \
+            --arg ref "$GITHUB_REF" \
+            '{schemaVersion:1,name:$name,version:$version,repository:$repository,sourceSha:$sourceSha,ref:$ref}' \
+            > release-candidate/IDENTITY.json
+          (
+            cd release-candidate
+            find . -type f ! -name CAPSULE_SHA256SUMS -print0 |
+              sort -z |
+              xargs -0 sha256sum
+          ) > release-candidate/CAPSULE_SHA256SUMS
+          tar -cf release-capsule.tar -C release-candidate .
+          digest="$(sha256sum release-capsule.tar | awk '{print $1}')"
+          printf '%s  %s\n' "$digest" release-capsule.tar > release-capsule.tar.sha256
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable verified release capsule
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verified-n8n-candidate-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            release-capsule.tar
+            release-capsule.tar.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish with npm OIDC
+    needs: verify
+    if: github.event_name == 'push' && vars.AGENTMUG_RELEASE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm-production
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Provision Node.js without token-oriented npm config
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.22.2
+
+      - name: Download candidate by immutable artifact ID
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.verify.outputs.artifact_id }}
+          path: .
+
+      - name: Verify and extract candidate capsule
+        shell: bash
+        env:
+          EXPECTED_SHA256: ${{ needs.verify.outputs.capsule_sha256 }}
+          EXPECTED_SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          test "$EXPECTED_SOURCE_SHA" = "$GITHUB_SHA"
+          echo "$EXPECTED_SHA256  release-capsule.tar" | sha256sum --check --strict
+          test "$(awk '{print $1}' release-capsule.tar.sha256)" = "$EXPECTED_SHA256"
+          while IFS= read -r entry; do
+            case "$entry" in
+              /*|../*|*/../*|*/..) echo "Unsafe capsule path: $entry" >&2; exit 1 ;;
+            esac
+          done < <(tar -tf release-capsule.tar)
+          mkdir capsule
+          tar -xf release-capsule.tar -C capsule
+          (cd capsule && sha256sum --check --strict CAPSULE_SHA256SUMS)
+
+      - name: Enforce protected OIDC-only publication
+        shell: bash
+        env:
+          RELEASE_ENABLED: ${{ vars.AGENTMUG_RELEASE_ENABLED }}
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+          ARTIFACT_ID: ${{ needs.verify.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.verify.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "dahshanlabs/agentmug-core"
+          test "$REPOSITORY_VISIBILITY" = "public"
+          test "$RELEASE_ENABLED" = "true"
+          test "$GITHUB_REF_TYPE" = "tag"
+          test "$GITHUB_REF_PROTECTED" = "true"
+          test "$GITHUB_REF_NAME" = "n8n-v${{ needs.verify.outputs.version }}"
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ARTIFACT_DIGEST" =~ ^[a-f0-9]{64}$ ]]
+          test -n "$ACTIONS_ID_TOKEN_REQUEST_URL"
+          test -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+          test -z "${NODE_AUTH_TOKEN:-}"
+          test -z "${NPM_TOKEN:-}"
+          for npmrc in "$HOME/.npmrc" .npmrc; do
+            if [ -f "$npmrc" ] &&
+              grep -Eiq '(_authToken|_auth|username|password)[[:space:]]*=' "$npmrc"; then
+              echo "Credential-bearing npm config is forbidden: $npmrc" >&2
+              exit 1
+            fi
+          done
+
+      - name: Publish exact sealed tarball
+        shell: bash
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+        run: |
+          set -euo pipefail
+          npm_cli="capsule/npm-cli/node_modules/npm/bin/npm-cli.js"
+          test "$(node "$npm_cli" --version)" = "11.19.0"
+          mapfile -t candidates < <(find capsule/package -maxdepth 1 -type f -name '*.tgz')
+          test "${#candidates[@]}" -eq 1
+          candidate="${candidates[0]}"
+          expected_integrity="sha512-$(
+            openssl dgst -sha512 -binary "$candidate" |
+              openssl base64 -A
+          )"
+          spec="n8n-nodes-agentmug@${{ needs.verify.outputs.version }}"
+          if registry_json="$(
+            node "$npm_cli" view "$spec" dist.integrity --json 2>/dev/null
+          )"; then
+            test "$(
+              jq -er 'select(type == "string" and length > 0)' \
+                <<<"$registry_json"
+            )" = "$expected_integrity"
+          else
+            node "$npm_cli" publish "$candidate" --access public
+          fi
+
+  bootstrap:
+    name: One-time first publish
+    needs: verify
+    if: github.event_name == 'workflow_dispatch' && vars.AGENTMUG_RELEASE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm-bootstrap
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Provision Node.js without token-oriented npm config
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.22.2
+
+      - name: Download candidate by immutable artifact ID
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.verify.outputs.artifact_id }}
+          path: .
+
+      - name: Verify and extract candidate capsule
+        id: registry-state
+        shell: bash
+        env:
+          EXPECTED_SHA256: ${{ needs.verify.outputs.capsule_sha256 }}
+          EXPECTED_SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "dahshanlabs/agentmug-core"
+          test "$REPOSITORY_VISIBILITY" = "public"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF_PROTECTED" = "true"
+          test "$EXPECTED_SOURCE_SHA" = "$GITHUB_SHA"
+          [[ "$EXPECTED_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          echo "$EXPECTED_SHA256  release-capsule.tar" | sha256sum --check --strict
+          test "$(awk '{print $1}' release-capsule.tar.sha256)" = "$EXPECTED_SHA256"
+          while IFS= read -r entry; do
+            case "$entry" in
+              /*|../*|*/../*|*/..) echo "Unsafe capsule path: $entry" >&2; exit 1 ;;
+            esac
+          done < <(tar -tf release-capsule.tar)
+          mkdir capsule
+          tar -xf release-capsule.tar -C capsule
+          (cd capsule && sha256sum --check --strict CAPSULE_SHA256SUMS)
+          npm_cli="capsule/npm-cli/node_modules/npm/bin/npm-cli.js"
+          mapfile -t candidates < <(find capsule/package -maxdepth 1 -type f -name '*.tgz')
+          test "${#candidates[@]}" -eq 1
+          candidate="${candidates[0]}"
+          expected_integrity="sha512-$(
+            openssl dgst -sha512 -binary "$candidate" |
+              openssl base64 -A
+          )"
+          spec="n8n-nodes-agentmug@${{ needs.verify.outputs.version }}"
+          if registry_json="$(
+            node "$npm_cli" view "$spec" dist.integrity --json 2>/dev/null
+          )"; then
+            test "$(
+              jq -er 'select(type == "string" and length > 0)' \
+                <<<"$registry_json"
+            )" = "$expected_integrity"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # npm requires the package to exist before its trusted publisher can be
+      # configured. Create a one-day granular token for this protected
+      # environment only, then revoke it and delete this secret immediately.
+      - name: Publish first version with one-time token and provenance
+        if: steps.registry-state.outputs.exists != 'true'
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_N8N_BOOTSTRAP_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"
+        run: |
+          set -euo pipefail
+          test -n "$NODE_AUTH_TOKEN"
+          npm_cli="capsule/npm-cli/node_modules/npm/bin/npm-cli.js"
+          test "$(node "$npm_cli" --version)" = "11.19.0"
+          mapfile -t candidates < <(find capsule/package -maxdepth 1 -type f -name '*.tgz')
+          test "${#candidates[@]}" -eq 1
+
+          userconfig="$RUNNER_TEMP/npm-bootstrap-${GITHUB_RUN_ID}.npmrc"
+          trap 'rm -f "$userconfig"' EXIT
+          umask 077
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$userconfig"
+          NPM_CONFIG_USERCONFIG="$userconfig" \
+            node "$npm_cli" publish "${candidates[0]}" --access public --provenance
+
+  verify-registry:
+    name: Verify registry bytes and generate SBOM
+    needs: [verify, publish, bootstrap]
+    if: >-
+      always() &&
+      needs.verify.result == 'success' &&
+      (needs.publish.result == 'success' || needs.bootstrap.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      capsule_sha256: ${{ steps.seal.outputs.sha256 }}
+
+    steps:
+      - name: Provision Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.22.2
+
+      - name: Download candidate by immutable artifact ID
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.verify.outputs.artifact_id }}
+          path: candidate
+
+      - name: Verify candidate capsule
+        shell: bash
+        env:
+          EXPECTED_SHA256: ${{ needs.verify.outputs.capsule_sha256 }}
+        run: |
+          set -euo pipefail
+          cd candidate
+          [[ "$EXPECTED_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          echo "$EXPECTED_SHA256  release-capsule.tar" | sha256sum --check --strict
+          mkdir capsule
+          tar -xf release-capsule.tar -C capsule
+          (cd capsule && sha256sum --check --strict CAPSULE_SHA256SUMS)
+
+      - name: Fetch and verify exact registry tarball
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ needs.verify.outputs.name }}
+          PACKAGE_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          npm_cli="candidate/capsule/npm-cli/node_modules/npm/bin/npm-cli.js"
+          spec="${PACKAGE_NAME}@${PACKAGE_VERSION}"
+          registry_json=""
+          for attempt in {1..10}; do
+            if registry_json="$(node "$npm_cli" view "$spec" dist.tarball dist.integrity repository.url license --json 2>/dev/null)"; then
+              break
+            fi
+            test "$attempt" -lt 10
+            sleep 3
+          done
+
+          url="$(jq -er '."dist.tarball"' <<<"$registry_json")"
+          integrity="$(jq -er '."dist.integrity"' <<<"$registry_json")"
+          test "$(jq -er '.license' <<<"$registry_json")" = "MIT"
+          test "$(jq -er '."repository.url"' <<<"$registry_json")" = "git+https://github.com/dahshanlabs/agentmug-core.git"
+          test "$url" = "https://registry.npmjs.org/n8n-nodes-agentmug/-/n8n-nodes-agentmug-${PACKAGE_VERSION}.tgz"
+          time_json="$(node "$npm_cli" view "$spec" time --json)"
+          published_at="$(
+            jq -er \
+              --arg version "$PACKAGE_VERSION" \
+              '.[$version] | select(type == "string" and length > 0)' \
+              <<<"$time_json"
+          )"
+
+          mkdir -p release/n8n/tarballs release/n8n/sbom
+          registry_tarball="release/n8n/tarballs/n8n-nodes-agentmug-${PACKAGE_VERSION}.tgz"
+          curl --proto '=https' --tlsv1.2 --fail --location \
+            --retry 5 --retry-all-errors "$url" -o "$registry_tarball"
+
+          algorithm="${integrity%%-*}"
+          expected="${integrity#*-}"
+          case "$algorithm" in
+            sha256|sha384|sha512) ;;
+            *) echo "Unsupported registry integrity algorithm: $algorithm" >&2; exit 1 ;;
+          esac
+          actual="$(openssl dgst "-$algorithm" -binary "$registry_tarball" | openssl base64 -A)"
+          test "$actual" = "$expected"
+          mapfile -t candidates < <(find candidate/capsule/package -maxdepth 1 -type f -name '*.tgz')
+          test "${#candidates[@]}" -eq 1
+          cmp "${candidates[0]}" "$registry_tarball"
+
+          (cd release/n8n/tarballs && sha256sum ./*.tgz) > release/n8n/SHA256SUMS
+          jq -n \
+            --arg name "$PACKAGE_NAME" \
+            --arg version "$PACKAGE_VERSION" \
+              --arg repository "$GITHUB_REPOSITORY" \
+              --arg commit "$GITHUB_SHA" \
+              --arg integrity "$integrity" \
+              --arg timestamp "$published_at" \
+            '{name:$name,version:$version,repository:$repository,commit:$commit,integrity:$integrity,publishedAt:$timestamp}' \
+            > release/n8n/PUBLISHED.json
+
+      - name: Install pinned Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          syft-version: v1.50.0
+
+      - name: Generate SPDX SBOM from exact registry tarball
+        shell: bash
+        env:
+          SYFT: ${{ steps.syft.outputs.cmd }}
+        run: |
+          set -euo pipefail
+          mapfile -t tarballs < <(find release/n8n/tarballs -maxdepth 1 -type f -name '*.tgz')
+          test "${#tarballs[@]}" -eq 1
+          published_at="$(jq -er '.publishedAt' release/n8n/PUBLISHED.json)"
+          tarball_sha256="$(sha256sum "${tarballs[0]}" | awk '{print $1}')"
+          namespace="https://agentmug.com/spdx/n8n-nodes-agentmug-${tarball_sha256}"
+
+          for pass in 1 2; do
+            raw="release/n8n/sbom/raw-${pass}.spdx.json"
+            normalized="release/n8n/sbom/normalized-${pass}.spdx.json"
+            "$SYFT" "file:${tarballs[0]}" --output "spdx-json=${raw}"
+            jq \
+              --arg created "$published_at" \
+              --arg namespace "$namespace" \
+              '.creationInfo.created = $created |
+                .documentNamespace = $namespace' \
+              "$raw" > "$normalized"
+            rm "$raw"
+            sleep 1
+          done
+
+          cmp \
+            release/n8n/sbom/normalized-1.spdx.json \
+            release/n8n/sbom/normalized-2.spdx.json
+          mv \
+            release/n8n/sbom/normalized-1.spdx.json \
+            release/n8n/sbom/n8n-nodes-agentmug.spdx.json
+          rm release/n8n/sbom/normalized-2.spdx.json
+
+      - name: Seal registry evidence
+        id: seal
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd release/n8n
+            find . -type f ! -name EVIDENCE_SHA256SUMS -print0 |
+              sort -z |
+              xargs -0 sha256sum
+          ) > release/n8n/EVIDENCE_SHA256SUMS
+          tar -cf registry-evidence.tar -C release/n8n .
+          digest="$(sha256sum registry-evidence.tar | awk '{print $1}')"
+          printf '%s  %s\n' "$digest" registry-evidence.tar > registry-evidence.tar.sha256
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Upload immutable registry evidence
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: n8n-npm-release-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            registry-evidence.tar
+            registry-evidence.tar.sha256
+          if-no-files-found: error
+          retention-days: 90
+
+  attest:
+    name: Attest registry tarball and SBOM
+    needs: verify-registry
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+      - name: Download evidence by immutable artifact ID
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.verify-registry.outputs.artifact_id }}
+          path: .
+
+      - name: Verify and extract registry evidence
+        shell: bash
+        env:
+          EXPECTED_SHA256: ${{ needs.verify-registry.outputs.capsule_sha256 }}
+          ARTIFACT_DIGEST: ${{ needs.verify-registry.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$ARTIFACT_DIGEST" =~ ^[a-f0-9]{64}$ ]]
+          echo "$EXPECTED_SHA256  registry-evidence.tar" | sha256sum --check --strict
+          test "$(awk '{print $1}' registry-evidence.tar.sha256)" = "$EXPECTED_SHA256"
+          while IFS= read -r entry; do
+            case "$entry" in
+              /*|../*|*/../*|*/..) echo "Unsafe evidence path: $entry" >&2; exit 1 ;;
+            esac
+          done < <(tar -tf registry-evidence.tar)
+          mkdir evidence
+          tar -xf registry-evidence.tar -C evidence
+          (cd evidence && sha256sum --check --strict EVIDENCE_SHA256SUMS)
+
+      - name: Attest exact registry tarball provenance
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: evidence/tarballs/n8n-nodes-agentmug-*.tgz
+
+      - name: Attest exact registry tarball SBOM
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: evidence/tarballs/n8n-nodes-agentmug-*.tgz
+          sbom-path: evidence/sbom/n8n-nodes-agentmug.spdx.json
+
+  metadata:
+    name: Publish canonical n8n release
+    needs: [verify, verify-registry, attest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download evidence by immutable artifact ID
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.verify-registry.outputs.artifact_id }}
+          path: .
+
+      - name: Verify evidence and prepare durable release assets
+        shell: bash
+        env:
+          EXPECTED_SHA256: ${{ needs.verify-registry.outputs.capsule_sha256 }}
+          PACKAGE_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          echo "$EXPECTED_SHA256  registry-evidence.tar" | sha256sum --check --strict
+          test "$(awk '{print $1}' registry-evidence.tar.sha256)" = "$EXPECTED_SHA256"
+          while IFS= read -r entry; do
+            case "$entry" in
+              /*|../*|*/../*|*/..) echo "Unsafe evidence path: $entry" >&2; exit 1 ;;
+            esac
+          done < <(tar -tf registry-evidence.tar)
+          mkdir evidence release-assets
+          tar -xf registry-evidence.tar -C evidence
+          (cd evidence && sha256sum --check --strict EVIDENCE_SHA256SUMS)
+
+          cp \
+            "evidence/tarballs/n8n-nodes-agentmug-${PACKAGE_VERSION}.tgz" \
+            release-assets/
+          cp \
+            evidence/sbom/n8n-nodes-agentmug.spdx.json \
+            "release-assets/n8n-nodes-agentmug-${PACKAGE_VERSION}.spdx.json"
+          cp evidence/PUBLISHED.json release-assets/
+          (
+            cd release-assets
+            sha256sum \
+              "n8n-nodes-agentmug-${PACKAGE_VERSION}.tgz" \
+              "n8n-nodes-agentmug-${PACKAGE_VERSION}.spdx.json" \
+              PUBLISHED.json |
+              sort -k2
+          ) > release-assets/SHA256SUMS
+          (
+            cd release-assets
+            sha256sum --check --strict SHA256SUMS
+          )
+
+      - name: Create immutable version tag and GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE_VERSION: ${{ needs.verify.outputs.version }}
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+          EVIDENCE_ARTIFACT_ID: ${{ needs.verify-registry.outputs.artifact_id }}
+          EVIDENCE_ARTIFACT_DIGEST: ${{ needs.verify-registry.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          tag="n8n-v${PACKAGE_VERSION}"
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$EVIDENCE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EVIDENCE_ARTIFACT_DIGEST" =~ ^[a-f0-9]{64}$ ]]
+
+          if ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+              --method POST \
+              -f "ref=refs/tags/${tag}" \
+              -f "sha=${SOURCE_SHA}" >/dev/null
+          fi
+          ref_type="$(
+            gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq '.object.type'
+          )"
+          ref_sha="$(
+            gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq '.object.sha'
+          )"
+          if [ "$ref_type" = "tag" ]; then
+            ref_sha="$(
+              gh api "repos/${GITHUB_REPOSITORY}/git/tags/${ref_sha}" --jq '.object.sha'
+            )"
+          fi
+          test "$ref_sha" = "$SOURCE_SHA"
+
+          printf '%s\n' \
+            "Verified npm release from ${SOURCE_SHA}." \
+            "" \
+            "npm: https://www.npmjs.com/package/n8n-nodes-agentmug/v/${PACKAGE_VERSION}" \
+            "Release checksum manifest SHA-256: $(sha256sum release-assets/SHA256SUMS | awk '{print $1}')" \
+            > release-notes.md
+
+          find release-assets -maxdepth 1 -type f -printf '%f\n' |
+            sort > expected-assets.txt
+
+          load_release() {
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}"
+          }
+
+          verify_release_metadata() {
+            local expected_draft="$1"
+            test "$(jq -r '.tag_name' <<<"$release_json")" = "$tag"
+            test "$(
+              jq -r '.name' <<<"$release_json"
+            )" = "n8n-nodes-agentmug ${PACKAGE_VERSION}"
+            test "$(jq -r '.draft' <<<"$release_json")" = "$expected_draft"
+            test "$(jq -r '.prerelease' <<<"$release_json")" = "false"
+            test "$(jq -r '.body' <<<"$release_json")" = "$(cat release-notes.md)"
+          }
+
+          verify_exact_assets() {
+            jq -r '.assets[].name' <<<"$release_json" |
+              sort > actual-assets.txt
+            cmp expected-assets.txt actual-assets.txt
+
+            mkdir -p downloaded-assets
+            while IFS= read -r asset_name; do
+              asset_id="$(
+                jq -er \
+                  --arg asset_name "$asset_name" \
+                  '[.assets[] | select(.name == $asset_name)] |
+                    select(length == 1) |
+                    .[0].id' \
+                  <<<"$release_json"
+              )"
+              [[ "$asset_id" =~ ^[1-9][0-9]*$ ]]
+              gh api \
+                --header "Accept: application/octet-stream" \
+                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+                > "downloaded-assets/${asset_name}"
+              cmp \
+                "release-assets/${asset_name}" \
+                "downloaded-assets/${asset_name}"
+            done < expected-assets.txt
+          }
+
+          if ! release_json="$(load_release 2>/dev/null)"; then
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --draft \
+              --title "n8n-nodes-agentmug ${PACKAGE_VERSION}" \
+              --notes-file release-notes.md \
+              >/dev/null
+            release_json="$(load_release)"
+          fi
+
+          case "$(jq -r '.draft' <<<"$release_json")" in
+            true)
+              verify_release_metadata "true"
+
+              jq -r '.assets[].name' <<<"$release_json" |
+                sort > existing-assets.txt
+              while IFS= read -r asset_name; do
+                if ! grep -Fxq "$asset_name" expected-assets.txt; then
+                  echo "Unexpected asset in draft release: $asset_name" >&2
+                  exit 1
+                fi
+              done < existing-assets.txt
+
+              while IFS= read -r asset_name; do
+                asset_count="$(
+                  jq \
+                    --arg asset_name "$asset_name" \
+                    '[.assets[] | select(.name == $asset_name)] | length' \
+                    <<<"$release_json"
+                )"
+                case "$asset_count" in
+                  0)
+                    gh release upload "$tag" \
+                      "release-assets/${asset_name}" \
+                      --repo "$GITHUB_REPOSITORY"
+                    ;;
+                  1)
+                    asset_id="$(
+                      jq -er \
+                        --arg asset_name "$asset_name" \
+                        '.assets[] | select(.name == $asset_name) | .id' \
+                        <<<"$release_json"
+                    )"
+                    gh api \
+                      --header "Accept: application/octet-stream" \
+                      "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+                      > "downloaded-${asset_name}"
+                    cmp \
+                      "release-assets/${asset_name}" \
+                      "downloaded-${asset_name}"
+                    ;;
+                  *)
+                    echo "Duplicate draft release asset: $asset_name" >&2
+                    exit 1
+                    ;;
+                esac
+                release_json="$(load_release)"
+              done < expected-assets.txt
+
+              verify_release_metadata "true"
+              verify_exact_assets
+              release_id="$(jq -er '.id' <<<"$release_json")"
+              [[ "$release_id" =~ ^[1-9][0-9]*$ ]]
+              gh api \
+                "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+                --method PATCH \
+                -F draft=false \
+                >/dev/null
+              ;;
+            false)
+              verify_release_metadata "false"
+              ;;
+            *)
+              echo "GitHub returned an invalid release draft state." >&2
+              exit 1
+              ;;
+          esac
+
+          for attempt in {1..10}; do
+            release_json="$(load_release)"
+            if [ "$(jq -r '.draft' <<<"$release_json")" = "false" ] &&
+              [ "$(jq -r '.immutable' <<<"$release_json")" = "true" ]; then
+              break
+            fi
+            test "$attempt" -lt 10
+            sleep 2
+          done
+
+          verify_release_metadata "false"
+          test "$(jq -r '.immutable' <<<"$release_json")" = "true"
+          verify_exact_assets
