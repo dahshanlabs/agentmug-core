@@ -494,6 +494,7 @@ async function validateWorkflows(root, violations) {
     "codeql",
   );
   for (const required of [
+    "github.event.repository.visibility == 'public'",
     "actions: read",
     "contents: read",
     "security-events: write",

@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "repository": "dahshanlabs/agentmug-core",
   "source": {
-    "commitSha": "bd4ce095d17b680b31bae3dcc121c519bcf9e7a6"
+    "commitSha": "7fe97f3ee7fb77b4737f7903a6e4cd638a1301f3"
   },
   "files": [
     {
@@ -52,8 +52,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "fcfdcf937835c951b478ea0e456a97e55110b8e0604fecdd175304f98251a9c7",
-      "size": 2154
+      "sha256": "6943d519f50ec4b2792b0965b20c11d55d7059473cf70940b14be74ad7db88d2",
+      "size": 2209
     },
     {
       "path": ".github/workflows/release-n8n.yml",
@@ -277,7 +277,7 @@
     },
     {
       "path": "packages/cli/package.json",
-      "sha256": "aaefb4c6a5b4a70a4c78600123d2a164cfbfce9db3204f6a46a41d899f8a3003",
+      "sha256": "d8cccf377721455e04474ee68de8a82616cc2297834d4dc32ef2eabe7decf237",
       "size": 1496
     },
     {
@@ -382,7 +382,7 @@
     },
     {
       "path": "packages/mcp-bridge/package.json",
-      "sha256": "65070bc8ee8bef32c14880fcd89c422462dbfc79f6a0346cdfcfdb37cd4c3dcc",
+      "sha256": "bbe981fc5d9dfe8b25b45991811b4e14b1255382665207a175d19aa7596883dd",
       "size": 1406
     },
     {
@@ -412,7 +412,7 @@
     },
     {
       "path": "packages/otel/package.json",
-      "sha256": "b10925603b9b115e8fcddb0f4d018fcbaffe8e024c9d3767acee5d102a556716",
+      "sha256": "f877e35d56484306d3c9bf81060150cfc3b552235f5cc369e16673def8e5ed50",
       "size": 1582
     },
     {
@@ -442,7 +442,7 @@
     },
     {
       "path": "packages/runtime/package.json",
-      "sha256": "afbc412043834fa3c4f21835990b98d0e567c0fbafe5c4f0ff05f5545206aab2",
+      "sha256": "21cf5b342ffb1116dd3b2f642b538944ba05f9069e2a73adadef2b311186caed",
       "size": 1994
     },
     {
@@ -847,12 +847,12 @@
     },
     {
       "path": "pnpm-lock.yaml",
-      "sha256": "b411b5b044312edd5219c26ebec2ada2ba0dec072de0f6f8df8df6975c6d4df6",
+      "sha256": "426ff68c962246c8f6074b1ce54ed8e2db68ec1a9fb723daa5ff3762be2a5576",
       "size": 91695
     },
     {
       "path": "pnpm-workspace.yaml",
-      "sha256": "a9dcc1032a2b6ccd01cbd2b83d7d7be1da68f4f2b81cbd4d4ed21658e6cb5a80",
+      "sha256": "91817872e4002adf765f6bcac885fa4225d26085f646cb75a94d7ac1eb9f5e5a",
       "size": 675
     },
     {
@@ -867,8 +867,8 @@
     },
     {
       "path": "scripts/audit-public-core.mjs",
-      "sha256": "6860b19f817b0b2229a2f64d4485a543e75b459e1437262d9c1a811b205dfa80",
-      "size": 24156
+      "sha256": "8c51fc2d5bcf9f922efec8cb27700ccc19a16eee0555f29875a726905010187c",
+      "size": 24210
     },
     {
       "path": "scripts/audit-public-core.test.mjs",
