@@ -479,14 +479,31 @@ async function validateWorkflows(root, violations) {
   const release =
     workflowContents.get("release.yml") ??
     (await readFile(releasePath, "utf8"));
-  const jobBlock = (name) => {
-    const header = new RegExp(`^  ${name}:[ \\t]*\\r?$`, "m").exec(release);
+  const workflowJobBlock = (workflow, name) => {
+    const header = new RegExp(`^  ${name}:[ \\t]*\\r?$`, "m").exec(workflow);
     if (!header) return null;
     const start = header.index + header[0].length;
-    const remainder = release.slice(start);
+    const remainder = workflow.slice(start);
     const nextJob = /^  [A-Za-z0-9_-]+:[ \t]*\r?$/m.exec(remainder);
     return nextJob ? remainder.slice(0, nextJob.index) : remainder;
   };
+  const releaseJobBlock = (name) => workflowJobBlock(release, name);
+
+  const codeqlJob = workflowJobBlock(
+    workflowContents.get("ci.yml") || "",
+    "codeql",
+  );
+  for (const required of [
+    "actions: read",
+    "contents: read",
+    "security-events: write",
+  ]) {
+    if (!codeqlJob?.includes(required)) {
+      violations.push(
+        `.github/workflows/ci.yml: CodeQL job missing ${required}`,
+      );
+    }
+  }
 
   for (const [label, required] of [
     ["explicit release enablement", "AGENTMUG_RELEASE_ENABLED"],
@@ -502,8 +519,8 @@ async function validateWorkflows(root, violations) {
     }
   }
 
-  const sbomJob = jobBlock("sbom");
-  const attestJob = jobBlock("attest");
+  const sbomJob = releaseJobBlock("sbom");
+  const attestJob = releaseJobBlock("attest");
   if (!sbomJob) {
     violations.push(
       ".github/workflows/release.yml: missing unprivileged sbom job",
