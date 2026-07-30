@@ -61,7 +61,7 @@
     "@n8n/node-cli": "0.41.2",
     "eslint": "9.39.4",
     "n8n-workflow": "2.31.3",
-    "prettier": "3.8.3",
+    "prettier": "3.9.6",
     "typescript": "5.9.3"
   }
 }
