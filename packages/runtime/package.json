@@ -33,7 +33,7 @@
     "test:llm-routing": "node scripts/test-llm-routing.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
+    "@anthropic-ai/sdk": "^0.115.0",
     "@google/genai": "^2.0.0",
     "openai": "^6.7.0"
   },
