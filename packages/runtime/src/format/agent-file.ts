@@ -17,14 +17,8 @@
 //   - Forward-compatible. Unknown fields are preserved by readers.
 
 import type { TriggerDefinition } from "../triggers/types";
-import type {
-  EvaluationContract,
-  SourceRequirement,
-} from "../sources/types";
-import {
-  validateEvaluationContract,
-  validateSourceRequirements,
-} from "../sources/validation";
+import type { EvaluationContract, SourceRequirement } from "../sources/types";
+import { validateEvaluationContract, validateSourceRequirements } from "../sources/validation";
 
 /**
  * Schema URL is the canonical version marker. A v2 format would use
@@ -35,16 +29,11 @@ import {
  * wild reference AGENT_FILE_SCHEMA_V1_LEGACY_AGENTLIT — parseAgentFile
  * accepts both for backwards compat so existing files keep working.
  */
-export const AGENT_FILE_SCHEMA_V1 =
-  "https://agentmug.com/schemas/agent.v1.json";
+export const AGENT_FILE_SCHEMA_V1 = "https://agentmug.com/schemas/agent.v1.json";
 
-export const AGENT_FILE_SCHEMA_V1_LEGACY_AGENTLIT =
-  "https://agentlit.dahshanlabs.com/schemas/agent.v1.json";
+export const AGENT_FILE_SCHEMA_V1_LEGACY_AGENTLIT = "https://agentlit.dahshanlabs.com/schemas/agent.v1.json";
 
-const ACCEPTED_SCHEMAS = new Set([
-  AGENT_FILE_SCHEMA_V1,
-  AGENT_FILE_SCHEMA_V1_LEGACY_AGENTLIT,
-]);
+const ACCEPTED_SCHEMAS = new Set([AGENT_FILE_SCHEMA_V1, AGENT_FILE_SCHEMA_V1_LEGACY_AGENTLIT]);
 
 /**
  * Rich description of a tool the agent is permitted to use. Distinct
@@ -65,11 +54,7 @@ const ACCEPTED_SCHEMAS = new Set([
  *     Nango integrations — a provider works only once the operator has
  *     configured it — with no per-provider code on the runtime side.
  */
-export type ToolReference =
-  | BuiltinToolReference
-  | McpToolReference
-  | WebhookToolReference
-  | NangoToolReference;
+export type ToolReference = BuiltinToolReference | McpToolReference | WebhookToolReference | NangoToolReference;
 
 export type BuiltinToolReference = {
   kind: "builtin";
@@ -196,15 +181,7 @@ export type AgentParameter = {
    *   - "file":    a private artifact binding. The schema travels with the
    *                .agent; the owner's file and stored value never do.
    */
-  type:
-    | "string"
-    | "text"
-    | "number"
-    | "boolean"
-    | "email"
-    | "url"
-    | "select"
-    | "file";
+  type: "string" | "text" | "number" | "boolean" | "email" | "url" | "select" | "file";
   /** Options for `type: "select"`. */
   options?: Array<{ value: string; label: string }>;
   /** Optional default value if the user doesn't override. */
@@ -243,10 +220,7 @@ export type ArtifactCompatibility = {
   message: string;
 };
 
-function structuralRequirementMatches(
-  actualValue: string,
-  expectedValue: string,
-): boolean {
+function structuralRequirementMatches(actualValue: string, expectedValue: string): boolean {
   const actual = actualValue.trim().toLowerCase().replace(/\s+/g, " ");
   const expected = expectedValue.trim().toLowerCase().replace(/\s+/g, " ");
   if (actual === expected) return true;
@@ -257,16 +231,11 @@ function structuralRequirementMatches(
     const index = actual.indexOf(expected, offset);
     if (index < 0) return false;
     const before = index > 0 ? actual[index - 1] : "";
-    const after =
-      index + expected.length < actual.length
-        ? actual[index + expected.length]
-        : "";
+    const after = index + expected.length < actual.length ? actual[index + expected.length] : "";
     const expectedStartsWithIdentifier = /^[a-z0-9_]/.test(expected);
     const expectedEndsWithIdentifier = /[a-z0-9_]$/.test(expected);
-    const leftBoundary =
-      !expectedStartsWithIdentifier || !before || !/[a-z0-9_]/.test(before);
-    const rightBoundary =
-      !expectedEndsWithIdentifier || !after || !/[a-z0-9_]/.test(after);
+    const leftBoundary = !expectedStartsWithIdentifier || !before || !/[a-z0-9_]/.test(before);
+    const rightBoundary = !expectedEndsWithIdentifier || !after || !/[a-z0-9_]/.test(after);
     if (leftBoundary && rightBoundary) return true;
     offset = index + 1;
   }
@@ -317,14 +286,10 @@ export function checkArtifactCompatibility(
     };
   }
 
-  const actualStructure = (candidate.structure ?? []).map((line) =>
-    line.trim().toLowerCase(),
-  );
+  const actualStructure = (candidate.structure ?? []).map((line) => line.trim().toLowerCase());
   const missingStructure = (expected.structure ?? []).filter((line) => {
     const expectedLine = line.trim().toLowerCase();
-    return !actualStructure.some(
-      (actual) => structuralRequirementMatches(actual, expectedLine),
-    );
+    return !actualStructure.some((actual) => structuralRequirementMatches(actual, expectedLine));
   });
   if (missingStructure.length > 0) {
     return {
@@ -344,6 +309,72 @@ export function checkArtifactCompatibility(
 }
 
 /**
+ * Redacted evidence that a capability passed its originating-task proof.
+ * The private task fixture and its input/output never travel in an .agent file.
+ * This receipt is informational provenance, not permission to execute or trust
+ * imported code without the receiving runtime's own verification policy.
+ */
+export type AgentSkillProofAttestation = {
+  version: 1;
+  receiptId: string;
+  status: "passed";
+  capabilityKind: string;
+  harnessId: string;
+  sandboxId: string;
+  contractMatched: true;
+  criteriaPassed: number;
+  criteriaTotal: number;
+  judgeId: string;
+  judgeModel: string;
+  verifiedAt: string;
+};
+
+/** Validate and project only the public, bounded proof receipt fields. */
+export function parseAgentSkillProofAttestation(raw: unknown): AgentSkillProofAttestation {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("Agent skill proof attestation must be an object");
+  }
+  const proof = raw as Partial<AgentSkillProofAttestation>;
+  const validBoundedString = (value: unknown, max: number) =>
+    typeof value === "string" && value.length > 0 && value.length <= max;
+  const validCounts =
+    Number.isInteger(proof.criteriaPassed) &&
+    Number.isInteger(proof.criteriaTotal) &&
+    Number(proof.criteriaTotal) > 0 &&
+    proof.criteriaPassed === proof.criteriaTotal;
+  if (
+    proof.version !== 1 ||
+    proof.status !== "passed" ||
+    proof.contractMatched !== true ||
+    !validBoundedString(proof.receiptId, 128) ||
+    !validBoundedString(proof.capabilityKind, 64) ||
+    !validBoundedString(proof.harnessId, 128) ||
+    !validBoundedString(proof.sandboxId, 128) ||
+    !validCounts ||
+    !validBoundedString(proof.judgeId, 128) ||
+    !validBoundedString(proof.judgeModel, 128) ||
+    !validBoundedString(proof.verifiedAt, 64) ||
+    Number.isNaN(Date.parse(String(proof.verifiedAt)))
+  ) {
+    throw new Error("Agent skill proof attestation is invalid");
+  }
+  return {
+    version: 1,
+    receiptId: proof.receiptId!,
+    status: "passed",
+    capabilityKind: proof.capabilityKind!,
+    harnessId: proof.harnessId!,
+    sandboxId: proof.sandboxId!,
+    contractMatched: true,
+    criteriaPassed: proof.criteriaPassed!,
+    criteriaTotal: proof.criteriaTotal!,
+    judgeId: proof.judgeId!,
+    judgeModel: proof.judgeModel!,
+    verifiedAt: proof.verifiedAt!,
+  };
+}
+
+/**
  * A verified skill the agent learned — a reusable capability it can replay.
  * Procedures, not private data, so skills travel with a shared/published file.
  * The full recipe is plain text (the steps/tool-calls to follow), keeping the
@@ -358,6 +389,11 @@ export type AgentSkill = {
   recipe: string;
   /** Whether it passed verification before it was kept. */
   verified?: boolean;
+  /** Optional redacted originating-task proof receipt. */
+  proof?: AgentSkillProofAttestation;
+  /** Optional provenance pin. The embedded recipe remains authoritative. */
+  librarySkillId?: string;
+  librarySkillVersion?: number;
 };
 
 /**
@@ -399,6 +435,17 @@ export type AgentCaveat = {
   options?: Array<{ label: string; detail: string; recommended?: boolean }>;
 };
 
+export type AgentExecutionPlacement = {
+  /** Host class selected by the Creation Truth Gate. */
+  target: "cloud" | "browser" | "desktop" | "self_hosted" | "hybrid";
+  /** Whether the managed cloud may execute this file directly. */
+  cloudRunnable: boolean;
+  /** A visible user session is required (screen sharing/device control). */
+  requiresUserPresence?: boolean;
+  /** Plain-language placement reason, safe to show before a run. */
+  reason?: string;
+};
+
 export type AgentFileV1 = {
   /**
    * Schema URL — typed as `string` rather than `typeof
@@ -426,6 +473,8 @@ export type AgentFileV1 = {
   version: string;
   /** ISO 8601 of when this file was generated. */
   exportedAt: string;
+  /** Portable runtime placement; old files omit it and default to cloud. */
+  execution?: AgentExecutionPlacement;
   blueprint: {
     /** e.g. "claude-sonnet-4-6" / "claude-opus-4-8" / "gpt-4o" / "gemini-2.0-flash".
      *  The runtime maps this prefix to the right LLM client. */
@@ -613,9 +662,7 @@ export type BuildAgentFileInput = Omit<AgentFileV1, "$schema" | "exportedAt"> & 
  * Text + audio are always offered (audio via the runtime's transcription); image
  * is added only when the model can actually see it.
  */
-export function acceptedInputsFor(
-  primaryModel: string,
-): Array<"text" | "audio" | "image"> {
+export function acceptedInputsFor(primaryModel: string): Array<"text" | "audio" | "image"> {
   const accepts: Array<"text" | "audio" | "image"> = ["text", "audio"];
   if (modelIsVisionCapable(primaryModel)) accepts.push("image");
   return accepts;
@@ -642,14 +689,13 @@ export function buildAgentFile(input: BuildAgentFileInput): AgentFileV1 {
     ...(input.emoji !== undefined ? { emoji: input.emoji } : {}),
     version: input.version,
     exportedAt: input.exportedAt ?? new Date().toISOString(),
+    ...(input.execution ? { execution: input.execution } : {}),
     blueprint: {
       primaryModel: bp.primaryModel,
       systemPrompt: bp.systemPrompt,
       tools: bp.tools,
       ...(bp.maxTokens !== undefined ? { maxTokens: bp.maxTokens } : {}),
-      ...(bp.extendedThinkingBudget !== undefined
-        ? { extendedThinkingBudget: bp.extendedThinkingBudget }
-        : {}),
+      ...(bp.extendedThinkingBudget !== undefined ? { extendedThinkingBudget: bp.extendedThinkingBudget } : {}),
       ...(bp.thinkingPatterns ? { thinkingPatterns: bp.thinkingPatterns } : {}),
       ...(bp.architecture ? { architecture: bp.architecture } : {}),
       ...(bp.skills ? { skills: bp.skills } : {}),
@@ -692,9 +738,7 @@ export function parseAgentFile(value: unknown): AgentFileV1 {
   }
   const v = value as Partial<AgentFileV1>;
   if (typeof v.$schema !== "string" || !ACCEPTED_SCHEMAS.has(v.$schema)) {
-    throw new Error(
-      `Unsupported $schema: ${String(v.$schema)} (expected ${AGENT_FILE_SCHEMA_V1})`,
-    );
+    throw new Error(`Unsupported $schema: ${String(v.$schema)} (expected ${AGENT_FILE_SCHEMA_V1})`);
   }
   for (const key of ["id", "name", "description", "version", "exportedAt"] as const) {
     if (typeof v[key] !== "string" || !(v[key] as string).length) {
@@ -707,6 +751,22 @@ export function parseAgentFile(value: unknown): AgentFileV1 {
   if (v.emoji !== undefined && typeof v.emoji !== "string") {
     throw new Error("Agent file emoji must be a string");
   }
+  if (v.execution !== undefined) {
+    const execution = v.execution as Partial<AgentExecutionPlacement>;
+    const targets = ["cloud", "browser", "desktop", "self_hosted", "hybrid"];
+    if (!targets.includes(String(execution.target))) {
+      throw new Error("Agent file execution.target is invalid");
+    }
+    if (typeof execution.cloudRunnable !== "boolean") {
+      throw new Error("Agent file execution.cloudRunnable must be boolean");
+    }
+    if (execution.requiresUserPresence !== undefined && typeof execution.requiresUserPresence !== "boolean") {
+      throw new Error("Agent file execution.requiresUserPresence must be boolean");
+    }
+    if (execution.reason !== undefined && typeof execution.reason !== "string") {
+      throw new Error("Agent file execution.reason must be a string");
+    }
+  }
   if (!v.blueprint || typeof v.blueprint !== "object") {
     throw new Error("Agent file missing blueprint");
   }
@@ -715,9 +775,7 @@ export function parseAgentFile(value: unknown): AgentFileV1 {
     typeof v.blueprint.systemPrompt !== "string" ||
     !Array.isArray(v.blueprint.tools)
   ) {
-    throw new Error(
-      "Agent file blueprint missing primaryModel / systemPrompt / tools",
-    );
+    throw new Error("Agent file blueprint missing primaryModel / systemPrompt / tools");
   }
   // Validate tools entries are either non-empty strings or valid refs.
   for (const t of v.blueprint.tools) {
@@ -729,12 +787,7 @@ export function parseAgentFile(value: unknown): AgentFileV1 {
       throw new Error("Agent file tool entry must be string or object");
     }
     const ref = t as Partial<ToolReference>;
-    if (
-      ref.kind !== "builtin" &&
-      ref.kind !== "mcp" &&
-      ref.kind !== "webhook" &&
-      ref.kind !== "nango"
-    ) {
+    if (ref.kind !== "builtin" && ref.kind !== "mcp" && ref.kind !== "webhook" && ref.kind !== "nango") {
       throw new Error(`Agent file tool has unknown kind: ${String(ref.kind)}`);
     }
     if (typeof ref.name !== "string" || !ref.name.length) {
@@ -762,11 +815,7 @@ export function parseAgentFile(value: unknown): AgentFileV1 {
     if (typeof v.outputs !== "object" || v.outputs === null) {
       throw new Error("Agent file outputs must be an object");
     }
-    if (
-      v.outputs.shape !== "text" &&
-      v.outputs.shape !== "json" &&
-      v.outputs.shape !== "void"
-    ) {
+    if (v.outputs.shape !== "text" && v.outputs.shape !== "json" && v.outputs.shape !== "void") {
       throw new Error(`Agent file outputs.shape unknown: ${String(v.outputs.shape)}`);
     }
   }
@@ -784,9 +833,7 @@ export function parseAgentFile(value: unknown): AgentFileV1 {
         throw new Error("Agent file parameter missing name");
       }
       if (!/^[a-z][a-z0-9_]*$/i.test(pp.name)) {
-        throw new Error(
-          `Agent file parameter name '${pp.name}' must be snake_case and start with a letter`,
-        );
+        throw new Error(`Agent file parameter name '${pp.name}' must be snake_case and start with a letter`);
       }
       if (seen.has(pp.name)) {
         throw new Error(`Agent file parameter '${pp.name}' declared twice`);
@@ -795,70 +842,38 @@ export function parseAgentFile(value: unknown): AgentFileV1 {
       if (typeof pp.label !== "string" || !pp.label.length) {
         throw new Error(`Agent file parameter '${pp.name}' missing label`);
       }
-      const VALID_TYPES = [
-        "string",
-        "text",
-        "number",
-        "boolean",
-        "email",
-        "url",
-        "select",
-        "file",
-      ] as const;
+      const VALID_TYPES = ["string", "text", "number", "boolean", "email", "url", "select", "file"] as const;
       if (!VALID_TYPES.includes(pp.type as (typeof VALID_TYPES)[number])) {
-        throw new Error(
-          `Agent file parameter '${pp.name}' has invalid type: ${String(pp.type)}`,
-        );
+        throw new Error(`Agent file parameter '${pp.name}' has invalid type: ${String(pp.type)}`);
       }
       if (typeof pp.required !== "boolean") {
-        throw new Error(
-          `Agent file parameter '${pp.name}' missing required:boolean`,
-        );
+        throw new Error(`Agent file parameter '${pp.name}' missing required:boolean`);
       }
       if (pp.type === "select" && (!Array.isArray(pp.options) || pp.options.length === 0)) {
-        throw new Error(
-          `Agent file parameter '${pp.name}' is type=select but options[] is missing or empty`,
-        );
+        throw new Error(`Agent file parameter '${pp.name}' is type=select but options[] is missing or empty`);
       }
       if (pp.type === "file") {
         if (!pp.artifact || typeof pp.artifact !== "object") {
-          throw new Error(
-            `Agent file parameter '${pp.name}' is type=file but artifact metadata is missing`,
-          );
+          throw new Error(`Agent file parameter '${pp.name}' is type=file but artifact metadata is missing`);
         }
-        if (
-          pp.artifact.kind !== "document" &&
-          pp.artifact.kind !== "table" &&
-          pp.artifact.kind !== "image"
-        ) {
-          throw new Error(
-            `Agent file parameter '${pp.name}' has an invalid artifact kind`,
-          );
+        if (pp.artifact.kind !== "document" && pp.artifact.kind !== "table" && pp.artifact.kind !== "image") {
+          throw new Error(`Agent file parameter '${pp.name}' has an invalid artifact kind`);
         }
         if (
           !Array.isArray(pp.artifact.accepts) ||
           pp.artifact.accepts.length === 0 ||
-          pp.artifact.accepts.some(
-            (value) => typeof value !== "string" || !value.trim(),
-          )
+          pp.artifact.accepts.some((value) => typeof value !== "string" || !value.trim())
         ) {
-          throw new Error(
-            `Agent file parameter '${pp.name}' must declare artifact.accepts[]`,
-          );
+          throw new Error(`Agent file parameter '${pp.name}' must declare artifact.accepts[]`);
         }
         if (
           pp.artifact.structure !== undefined &&
-          (!Array.isArray(pp.artifact.structure) ||
-            pp.artifact.structure.some((value) => typeof value !== "string"))
+          (!Array.isArray(pp.artifact.structure) || pp.artifact.structure.some((value) => typeof value !== "string"))
         ) {
-          throw new Error(
-            `Agent file parameter '${pp.name}' artifact.structure must be a string array`,
-          );
+          throw new Error(`Agent file parameter '${pp.name}' artifact.structure must be a string array`);
         }
         if (pp.default !== undefined) {
-          throw new Error(
-            `Agent file parameter '${pp.name}' type=file cannot carry a default file binding`,
-          );
+          throw new Error(`Agent file parameter '${pp.name}' type=file cannot carry a default file binding`);
         }
       }
     }
@@ -876,6 +891,27 @@ export function parseAgentFile(value: unknown): AgentFileV1 {
       if (typeof ss.trigger !== "string" || typeof ss.recipe !== "string") {
         throw new Error(`Agent file skill '${ss.name}' missing trigger/recipe`);
       }
+      const hasLibraryId = ss.librarySkillId !== undefined;
+      const hasLibraryVersion = ss.librarySkillVersion !== undefined;
+      if (hasLibraryId !== hasLibraryVersion) {
+        throw new Error(`Agent file skill '${ss.name}' needs both librarySkillId and librarySkillVersion`);
+      }
+      if (
+        hasLibraryId &&
+        (typeof ss.librarySkillId !== "string" ||
+          !ss.librarySkillId.length ||
+          !Number.isInteger(ss.librarySkillVersion) ||
+          Number(ss.librarySkillVersion) < 1)
+      ) {
+        throw new Error(`Agent file skill '${ss.name}' has an invalid library version pin`);
+      }
+      if (ss.proof !== undefined) {
+        try {
+          parseAgentSkillProofAttestation(ss.proof);
+        } catch {
+          throw new Error(`Agent file skill '${ss.name}' has an invalid proof attestation`);
+        }
+      }
     }
   }
   // Optional caveats — validate shape if present (lenient: drop nothing here,
@@ -887,14 +923,8 @@ export function parseAgentFile(value: unknown): AgentFileV1 {
     }
     for (const c of v.blueprint.caveats) {
       const cc = c as Partial<AgentCaveat>;
-      if (
-        typeof cc?.requested !== "string" ||
-        typeof cc.doing !== "string" ||
-        typeof cc.why !== "string"
-      ) {
-        throw new Error(
-          "Agent file caveat must have string requested / doing / why",
-        );
+      if (typeof cc?.requested !== "string" || typeof cc.doing !== "string" || typeof cc.why !== "string") {
+        throw new Error("Agent file caveat must have string requested / doing / why");
       }
     }
   }
@@ -1034,9 +1064,7 @@ export function extractReferencedParameters(template: string): string[] {
  * ToolReferences. Bare strings become `{ kind: "builtin", name }`.
  */
 export function normalizeTools(file: AgentFileV1): ToolReference[] {
-  return file.blueprint.tools.map((t) =>
-    typeof t === "string" ? { kind: "builtin", name: t } : t,
-  );
+  return file.blueprint.tools.map((t) => (typeof t === "string" ? { kind: "builtin", name: t } : t));
 }
 
 /**
@@ -1044,9 +1072,7 @@ export function normalizeTools(file: AgentFileV1): ToolReference[] {
  * tool references. Two MCP tools that need the same provider are
  * merged into one requirement with the union of their scopes.
  */
-export function getRequiredCredentials(
-  file: AgentFileV1,
-): CredentialRequirement[] {
+export function getRequiredCredentials(file: AgentFileV1): CredentialRequirement[] {
   const byProvider = new Map<string, CredentialRequirement>();
   for (const tool of normalizeTools(file)) {
     let provider: string | undefined;
@@ -1114,9 +1140,7 @@ export function getRequiredCredentials(
  * entries; unknown tools contribute nothing. Returns undefined when the
  * toolset implies no connectivity (so exports omit the block entirely).
  */
-export function deriveConnectivityFromTools(
-  toolNames: string[],
-): ConnectivityContract | undefined {
+export function deriveConnectivityFromTools(toolNames: string[]): ConnectivityContract | undefined {
   const delivers: NonNullable<ConnectivityContract["delivers"]> = [];
   const reads: NonNullable<ConnectivityContract["reads"]> = [];
   // Keys are the REAL tool ids as stored in blueprints — Nango-proxied tools

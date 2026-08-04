@@ -112,7 +112,12 @@ export type ToolExecutionContext = {
    * No-op when undefined (e.g. sub-agent contexts where pausing
    * doesn't make sense).
    */
-  pauseForUser?: (args: { question: string; hint?: string; options?: string[] }) => void;
+  pauseForUser?: (args: {
+    question: string;
+    hint?: string;
+    options?: string[];
+    allowOther?: boolean;
+  }) => void;
   /**
    * The run's abort signal (Phase 22). Executors with external work
    * — a fetch, a spawned subprocess, a long timer — should listen
@@ -134,6 +139,8 @@ export type ToolExecutionContext = {
    * UI can correlate them.
    */
   currentToolUseId?: string;
+  /** Stable durable action id for the current effectful tool call. */
+  currentActionId?: string;
   /**
    * Multi-account: which connected ACCOUNT this agent uses per provider —
    * a map of canonical provider slug ("google", "outlook", "twilio", …) to

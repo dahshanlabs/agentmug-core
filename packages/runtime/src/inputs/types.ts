@@ -1,6 +1,5 @@
-// Agent input shapes. Phase 0 only consumes TextInput; the other types
-// are declared so future phases (Whisper transcription, vision input)
-// can plug into the engine without reshaping its signature.
+// Portable agent input shapes used across cloud, desktop, and CLI runners.
+// Hosts validate and bound binary content before handing it to the engine.
 
 export type TextInput = {
   type: "text";
@@ -26,4 +25,15 @@ export type ImageInput = {
   text?: string;
 };
 
-export type AgentInput = TextInput | AudioInput | ImageInput;
+export type MultiModalInput = {
+  type: "multimodal";
+  /** Optional text or extracted document content accompanying the images. */
+  text?: string;
+  /** Bounded by the host before dispatch. Each image is base64 or binary data. */
+  images: Array<{
+    data: Buffer | ArrayBuffer | string;
+    mimeType: string;
+  }>;
+};
+
+export type AgentInput = TextInput | AudioInput | ImageInput | MultiModalInput;

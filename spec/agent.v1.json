@@ -39,6 +39,10 @@
       "minLength": 1,
       "description": "Short user-facing summary of what the agent does."
     },
+    "emoji": {
+      "type": "string",
+      "description": "Optional single emoji used as the agent's avatar (e.g. '📧'). Travels with the file so an imported/forked agent keeps its identity. Absent on older files — readers fall back to deriving one from the name."
+    },
     "version": {
       "type": "string",
       "minLength": 1,
@@ -66,6 +70,25 @@
         "systemPrompt": {
           "type": "string",
           "description": "Full system prompt verbatim. Sent to the LLM on every run."
+        },
+        "maxTokens": {
+          "type": "number",
+          "description": "Optional per-agent output token cap. Omit for the runtime default. The engine clamps it to a sane range, so a long-form agent can request more headroom without a code change."
+        },
+        "extendedThinkingBudget": {
+          "type": "number",
+          "description": "Optional extended-thinking budget in tokens. When set, the agent reasons in a visible thinking block before answering (the engine clamps the budget). Omit = thinking off. Ignored on models without the capability."
+        },
+        "guardrails": {
+          "type": "object",
+          "description": "Per-agent guardrails. Travel with the file so the protection survives export, fork, and off-cloud execution. A runtime that cannot enforce a declared guardrail should report that rather than running unprotected.",
+          "additionalProperties": true,
+          "properties": {
+            "sideEffectGate": {
+              "enum": ["off", "confirm", "refuse"],
+              "description": "Opts the agent into the same-turn prompt-injection backstop for side-effecting tools."
+            }
+          }
         },
         "tools": {
           "type": "array",
@@ -95,6 +118,71 @@
             "pipeline",
             "hierarchical"
           ]
+        },
+        "skills": {
+          "type": "array",
+          "description": "Optional verified skills the agent has learned — reusable capabilities it replays via use_skill. Procedures, not private data, so they always travel with a shared or published file.",
+          "items": {
+            "type": "object",
+            "required": ["name", "trigger", "recipe"],
+            "additionalProperties": true,
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Identifier the agent invokes the skill by."
+              },
+              "trigger": {
+                "type": "string",
+                "description": "When to use it, in plain language (e.g. 'when the user asks to chase overdue invoices')."
+              },
+              "recipe": {
+                "type": "string",
+                "description": "The replayable steps. Plain text only — never executable code, preserving the pure-data guarantee."
+              },
+              "verified": {
+                "type": "boolean",
+                "description": "Whether the skill passed verification before it was kept."
+              }
+            }
+          }
+        },
+        "caveats": {
+          "type": "array",
+          "description": "Optional 'Heads up' adaptations — why this agent diverges from the literal request. PUBLIC and display-only: they travel in every export and never affect execution, so the same heads-up renders on web, desktop, and CLI. Empty or absent = the request was honored exactly.",
+          "items": {
+            "type": "object",
+            "required": ["requested", "doing", "why"],
+            "additionalProperties": true,
+            "properties": {
+              "requested": {
+                "type": "string",
+                "description": "What the user literally asked for, in their words."
+              },
+              "doing": {
+                "type": "string",
+                "description": "What the agent does instead."
+              },
+              "why": {
+                "type": "string",
+                "description": "The one-line reason the literal ask wasn't possible."
+              },
+              "options": {
+                "type": "array",
+                "description": "Real alternative routes the user might prefer, rendered as a choice list. At most one should be marked recommended.",
+                "items": {
+                  "type": "object",
+                  "required": ["label", "detail"],
+                  "additionalProperties": true,
+                  "properties": {
+                    "label": { "type": "string" },
+                    "detail": { "type": "string" },
+                    "recommended": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -362,6 +450,37 @@
           ]
         }
       }
+    },
+    "brain": {
+      "type": "array",
+      "description": "PRIVATE. The agent's accumulated structured knowledge about its owner's world. Rides ONLY an owner-initiated personal export (include=brain) — never a shared, published, or marketplace file, so publishing cannot leak private knowledge by construction. On import these become the importing user's own pages.",
+      "items": {
+        "type": "object",
+        "required": ["title", "content"],
+        "additionalProperties": true,
+        "properties": {
+          "title": { "type": "string", "minLength": 1 },
+          "content": { "type": "string" },
+          "slug": { "type": "string" },
+          "summary": { "type": "string" },
+          "links": { "type": "array", "items": { "type": "string" } },
+          "sources": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "memory": {
+      "type": "array",
+      "description": "PRIVATE. The agent's learned flat facts about its owner. Same rule as brain: rides ONLY the owner's personal export, never a shared or published file. On import the facts become the importing user's own memory on the new agent.",
+      "items": {
+        "type": "object",
+        "required": ["key", "value"],
+        "additionalProperties": true,
+        "properties": {
+          "key": { "type": "string", "minLength": 1 },
+          "value": { "type": "string" },
+          "importance": { "type": "number" }
+        }
+      }
     }
   },
   "$defs": {
@@ -526,14 +645,20 @@
         "minimumScore": { "type": "number", "minimum": 0, "maximum": 1 },
         "checks": {
           "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
           "items": {
             "type": "object",
             "required": ["id", "name", "type", "phase", "severity"],
             "additionalProperties": false,
             "properties": {
-              "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
-              "name": { "type": "string", "minLength": 1 },
-              "description": { "type": "string" },
+              "id": {
+                "type": "string",
+                "maxLength": 160,
+                "pattern": "^[a-z][a-z0-9_-]*$"
+              },
+              "name": { "type": "string", "minLength": 1, "maxLength": 280 },
+              "description": { "type": "string", "maxLength": 4000 },
               "type": {
                 "enum": [
                   "source-ready",
@@ -549,15 +674,33 @@
               "severity": { "enum": ["error", "warning"] },
               "sourceIds": {
                 "type": "array",
+                "maxItems": 30,
                 "uniqueItems": true,
                 "items": { "type": "string", "minLength": 1 }
               },
               "assertion": {
                 "type": "string",
+                "maxLength": 10000,
                 "description": "Declarative assertion only; runtimes MUST NOT execute it as code."
               },
               "config": { "type": "object" }
-            }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": { "type": { "const": "output-schema" } }
+                },
+                "then": {
+                  "required": ["config"],
+                  "properties": {
+                    "config": {
+                      "required": ["schema"],
+                      "properties": { "schema": { "type": "object" } }
+                    }
+                  }
+                }
+              }
+            ]
           }
         }
       }

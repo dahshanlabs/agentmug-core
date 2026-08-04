@@ -44,6 +44,7 @@ import type {
   ReceiptAdapter,
   SourceAdapter,
 } from "./sources/adapters";
+import type { RunActionReceipt } from "./actions/types";
 
 /**
  * In-memory persistence backed by a single AgentFileV1. Mirrors
@@ -55,7 +56,11 @@ import type {
  */
 export class InMemoryPersistenceAdapter implements PersistenceAdapter {
   private agentFile: AgentFileV1;
-  private runs = new Map<string, NewRun & Partial<RunCompletion & RunFailure>>();
+  private runs = new Map<
+    string,
+    NewRun & Partial<RunCompletion & RunFailure>
+  >();
+  private actions = new Map<string, RunActionReceipt>();
 
   constructor(agentFile: AgentFileV1) {
     this.agentFile = agentFile;
@@ -75,6 +80,7 @@ export class InMemoryPersistenceAdapter implements PersistenceAdapter {
     return {
       systemPrompt: this.agentFile.blueprint.systemPrompt,
       primaryModel: this.agentFile.blueprint.primaryModel,
+      evaluation: this.agentFile.evaluation,
       ...(this.agentFile.blueprint.maxTokens !== undefined
         ? { maxTokens: this.agentFile.blueprint.maxTokens }
         : {}),
@@ -104,6 +110,10 @@ export class InMemoryPersistenceAdapter implements PersistenceAdapter {
     if (existing) this.runs.set(update.id, { ...existing, ...update });
   }
 
+  async saveRunAction(action: RunActionReceipt): Promise<void> {
+    this.actions.set(action.id, { ...action });
+  }
+
   async incrementAgentRunCount(_agentId: string): Promise<void> {
     /* no-op for in-memory */
   }
@@ -111,6 +121,11 @@ export class InMemoryPersistenceAdapter implements PersistenceAdapter {
   /** Peek at the run history this adapter is holding. Handy in tests. */
   listRuns(): ReadonlyArray<NewRun & Partial<RunCompletion & RunFailure>> {
     return Array.from(this.runs.values());
+  }
+
+  /** Durable-for-process action receipts for quickstarts and tests. */
+  listActions(): ReadonlyArray<RunActionReceipt> {
+    return Array.from(this.actions.values());
   }
 }
 
@@ -230,6 +245,7 @@ export async function quickRun(
       bindings: sourceBindings,
       adapters: sourceAdapters,
     }),
+    evaluation: agentFile.evaluation,
     tools: tools ?? new InMemoryToolRegistry(),
     onEvent: onEvent ?? (() => {}),
   });

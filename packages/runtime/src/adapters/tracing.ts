@@ -15,6 +15,7 @@ export type LlmCallTrace = {
   tokens: number;
   costCents: number;
   latencyMs: number;
+  startedAt: Date;
 };
 
 export type TranscriptionTrace = {
@@ -28,6 +29,7 @@ export type TranscriptionTrace = {
   costCents: number | null;
   latencyMs: number;
   transcriptText: string;
+  startedAt: Date;
 };
 
 /**
@@ -44,10 +46,12 @@ export type ToolCallTrace = {
   name: string;
   input: string;
   output: string;
-  status: "success" | "error";
+  /** Execution-only tools use success/error; effectful tools expose outcome. */
+  status: "success" | "error" | "pending" | "succeeded" | "failed" | "unknown";
   /** 0 = top-level; 1+ = inside a sub-agent dispatch chain. */
   depth: number;
   latencyMs: number;
+  startedAt: Date;
 };
 
 export interface TracingAdapter {

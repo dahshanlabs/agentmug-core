@@ -27,10 +27,13 @@
     "postpack": "node ../../scripts/prepare-package-license.mjs --clean",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:artifact-contract": "node scripts/test-artifact-contract.mjs",
+    "test:architectures": "node scripts/test-architecture-capabilities.mjs",
     "test:engine-sources": "node scripts/test-engine-sources.mjs",
     "test:source-contract": "node scripts/test-source-contract.mjs",
     "test:net-guard": "node scripts/test-net-guard.mjs",
-    "test:llm-routing": "node scripts/test-llm-routing.mjs"
+    "test:llm-routing": "node scripts/test-llm-routing.mjs && node scripts/test-llm-gemini.mjs",
+    "test:actions": "node scripts/test-actions.mjs",
+    "test:evaluations": "node scripts/test-portable-evaluation.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

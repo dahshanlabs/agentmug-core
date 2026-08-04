@@ -67,7 +67,8 @@ export function normalizeSkillName(raw: string): string {
   return raw
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N}]+/gu, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, MAX_SKILL_NAME_CHARS);
 }
