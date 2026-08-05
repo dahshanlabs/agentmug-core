@@ -10,14 +10,21 @@
 //              token retrieved at run time — type only, no executor.
 //   - mcp:     proxied to an MCP server — type only, no executor.
 
-export type InlineToolDefinition = {
+import type { ActionEffectDefinition } from "../actions/types";
+
+type ToolEffectMetadata = {
+  /** Declares a real-world effect and the proof needed to call it successful. */
+  effect?: ActionEffectDefinition;
+};
+
+export type InlineToolDefinition = ToolEffectMetadata & {
   type: "inline";
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
 };
 
-export type WebhookToolDefinition = {
+export type WebhookToolDefinition = ToolEffectMetadata & {
   type: "webhook";
   name: string;
   description: string;
@@ -26,7 +33,7 @@ export type WebhookToolDefinition = {
   inputSchema?: Record<string, unknown>;
 };
 
-export type OAuthToolDefinition = {
+export type OAuthToolDefinition = ToolEffectMetadata & {
   type: "oauth";
   name: string;
   description: string;
@@ -37,7 +44,7 @@ export type OAuthToolDefinition = {
   inputSchema?: Record<string, unknown>;
 };
 
-export type McpToolDefinition = {
+export type McpToolDefinition = ToolEffectMetadata & {
   type: "mcp";
   name: string;
   description: string;

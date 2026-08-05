@@ -50,6 +50,7 @@ The bridge forwards the call to AgentMug, the agent runs there (with its Gmail O
   `http://localhost/...` manifest. Remote manifests are HTTPS-only.
 
 The first positional arg can be either:
+
 - A full manifest URL: `https://agentmug.com/api/external/agents/<id>`
 - A bare agent ID: `<id>` (uses `AGENTMUG_HOST` to build the URL)
 
@@ -97,6 +98,25 @@ the run. A KLYPIX read includes the brain revision, its trust label
 hashed evidence projection, consumed card ids, and actual read timestamp. The
 tool result includes the same receipt as structured MCP content so automation
 can inspect it without scraping prose.
+
+## Reliability checks
+
+When the hosted worker has protected regression cases, the bridge exposes a
+second tool named `<worker_tool>_safe_check` and this resource:
+
+```text
+agentmug://agents/<id>/reliability
+```
+
+The check runs the same owner-private suite used in AgentMug. It uses safe
+simulation, spends model tokens, and never calls live connected tools. MCP
+receives only scores, status, case counts, and timing. Regression inputs,
+expected outputs, assertions, and detailed trajectories remain private in
+AgentMug.
+
+This cloud check evaluates the hosted worker version. It does not claim to
+test a locally modified `.agent` file. Local hosts report the portable checks
+that actually ran in that host's run receipt.
 
 ## How it works
 

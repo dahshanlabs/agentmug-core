@@ -781,6 +781,9 @@ export function validateEvaluationContract(
     issues.push("Agent file evaluation.checks must be a non-empty array.");
     return issues;
   }
+  if (contract.checks.length > 50) {
+    issues.push("Agent file evaluation.checks can contain at most 50 checks.");
+  }
   const ids = new Set<string>();
   for (const raw of contract.checks) {
     if (!raw || typeof raw !== "object") {
@@ -790,11 +793,24 @@ export function validateEvaluationContract(
     const check = raw as Record<string, unknown>;
     const id = typeof check.id === "string" ? check.id : "";
     if (!id) issues.push("Agent file evaluation check missing id.");
+    else if (id.length > 160)
+      issues.push(`Agent file evaluation check id exceeds 160 characters.`);
     else if (ids.has(id))
       issues.push(`Agent file evaluation check '${id}' is declared twice.`);
     else ids.add(id);
     if (typeof check.name !== "string" || !check.name.trim()) {
       issues.push(`Agent file evaluation check '${id}' missing name.`);
+    } else if (check.name.length > 280) {
+      issues.push(`Agent file evaluation check '${id}' name is too long.`);
+    }
+    if (
+      check.description !== undefined &&
+      (typeof check.description !== "string" ||
+        check.description.length > 4_000)
+    ) {
+      issues.push(
+        `Agent file evaluation check '${id}' description is invalid.`,
+      );
     }
     if (
       !EVALUATION_CHECK_TYPES.includes(
@@ -818,6 +834,10 @@ export function validateEvaluationContract(
       issues.push(
         `Agent file evaluation check '${id}' sourceIds must be a string array.`,
       );
+    } else if (Array.isArray(check.sourceIds) && check.sourceIds.length > 30) {
+      issues.push(
+        `Agent file evaluation check '${id}' has too many sourceIds.`,
+      );
     } else if (Array.isArray(check.sourceIds) && knownSourceIds !== undefined) {
       for (const sourceId of check.sourceIds) {
         if (!knownSourceIds.includes(sourceId)) {
@@ -832,6 +852,41 @@ export function validateEvaluationContract(
       (typeof check.assertion !== "string" || !check.assertion.trim())
     ) {
       issues.push(`Agent file evaluation check '${id}' needs an assertion.`);
+    }
+    if (
+      check.assertion !== undefined &&
+      (typeof check.assertion !== "string" || check.assertion.length > 10_000)
+    ) {
+      issues.push(`Agent file evaluation check '${id}' assertion is invalid.`);
+    }
+    if (
+      check.config !== undefined &&
+      (!check.config ||
+        typeof check.config !== "object" ||
+        Array.isArray(check.config))
+    ) {
+      issues.push(
+        `Agent file evaluation check '${id}' config must be an object.`,
+      );
+    } else if (
+      check.config !== undefined &&
+      JSON.stringify(check.config).length > 32_000
+    ) {
+      issues.push(`Agent file evaluation check '${id}' config is too large.`);
+    }
+    if (
+      check.type === "output-schema" &&
+      (!check.config ||
+        typeof check.config !== "object" ||
+        Array.isArray(check.config) ||
+        !("schema" in check.config) ||
+        !check.config.schema ||
+        typeof check.config.schema !== "object" ||
+        Array.isArray(check.config.schema))
+    ) {
+      issues.push(
+        `Agent file evaluation check '${id}' output-schema needs config.schema.`,
+      );
     }
   }
   return issues;

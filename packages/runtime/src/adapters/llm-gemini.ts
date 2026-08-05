@@ -29,6 +29,7 @@ import type {
   LlmContentBlock,
   LlmToolDefinition,
 } from "./llm";
+import { normalizeExplicitToolPropertyTypes } from "./tool-schema-compat";
 
 export type GeminiLlmClientOptions = {
   apiKey: string;
@@ -93,7 +94,10 @@ export class GeminiLlmClient implements LlmClient {
       };
     };
 
-    const contents = params.messages.map(toGenAiContent);
+    const toolCallNames = collectToolCallNames(params.messages);
+    const contents = params.messages.map((message) =>
+      toGenAiContent(message, toolCallNames),
+    );
     const sdkTools = params.tools && params.tools.length > 0
       ? [{ functionDeclarations: params.tools.map(toGenAiFunctionDeclaration) }]
       : undefined;
@@ -187,7 +191,10 @@ export class GeminiLlmClient implements LlmClient {
   }
 }
 
-function toGenAiContent(msg: { role: "user" | "assistant"; content: string | LlmContentBlock[] }): GenAiContent {
+function toGenAiContent(
+  msg: { role: "user" | "assistant"; content: string | LlmContentBlock[] },
+  toolCallNames: ReadonlyMap<string, string>,
+): GenAiContent {
   // Gemini uses "model" instead of "assistant".
   const role: GenAiContent["role"] = msg.role === "assistant" ? "model" : "user";
 
@@ -224,12 +231,10 @@ function toGenAiContent(msg: { role: "user" | "assistant"; content: string | Llm
       }
       parts.push({
         functionResponse: {
-          // Gemini matches functionResponse → functionCall by NAME,
-          // not id. We don't have the original tool name here; use
-          // the tool_use_id as a fallback so downstream model calls
-          // can still see SOMETHING. Real callers should preserve
-          // the tool name in tool_result content if they care.
-          name: extractFunctionNameFromId(block.tool_use_id),
+          // Gemini requires both the original function name and matching call
+          // id. Recover the name from the assistant tool_use in this stateless
+          // conversation history instead of guessing from the opaque id.
+          name: toolCallNames.get(block.tool_use_id) ?? "tool",
           response,
           id: block.tool_use_id,
         },
@@ -249,8 +254,21 @@ function toGenAiFunctionDeclaration(tool: LlmToolDefinition): unknown {
   return {
     name: tool.name,
     description: tool.description,
-    parameters: tool.inputSchema,
+    parameters: normalizeExplicitToolPropertyTypes(tool.inputSchema),
   };
+}
+
+function collectToolCallNames(
+  messages: Array<{ role: "user" | "assistant"; content: string | LlmContentBlock[] }>,
+): Map<string, string> {
+  const names = new Map<string, string>();
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const block of message.content) {
+      if (block.type === "tool_use") names.set(block.id, block.name);
+    }
+  }
+  return names;
 }
 
 function mapStopReason(geminiReason: string, hadToolCalls: boolean): string {
@@ -267,16 +285,4 @@ function mapStopReason(geminiReason: string, hadToolCalls: boolean): string {
     default:
       return "end_turn";
   }
-}
-
-/**
- * Best-effort recovery of a function name from a tool_use_id.
- * Our engine generates ids in the form `gemini_<idx>_<time>` for
- * Gemini-originated calls; for Anthropic/OpenAI-originated ids the
- * name isn't recoverable, so fall back to a placeholder that Gemini
- * will at least accept as a string field.
- */
-function extractFunctionNameFromId(id: string): string {
-  // If we ever encode tool_name in the id, parse it out here.
-  return id.startsWith("gemini_") ? "tool" : id || "tool";
 }

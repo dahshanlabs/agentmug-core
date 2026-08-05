@@ -104,6 +104,31 @@ type RunReceiptSummary = {
   error?: { code?: string; message?: string };
 };
 
+export type ReliabilityRunSummary = {
+  id: string;
+  agentId: string;
+  trigger: "manual" | "release_gate" | "external";
+  status: "running" | "completed" | "failed";
+  blueprintVersion?: number;
+  aggregateScore?: number;
+  passRate?: number;
+  casesRun: number;
+  error?: string;
+  durationMs?: number;
+  startedAt: string;
+  completedAt?: string;
+  createdAt: string;
+};
+
+export type ReliabilitySummary = {
+  safeSimulation: true;
+  caseCount: number;
+  canRun: boolean;
+  latestRun: ReliabilityRunSummary | null;
+  history: ReliabilityRunSummary[];
+  privacy: string;
+};
+
 /**
  * What the AgentMug manifest endpoint returns. Mirrors the shape
  * of the public hosted-agent manifest endpoint.
@@ -126,6 +151,11 @@ export type AgentManifest = {
    * never be returned by this endpoint.
    */
   sources?: SourceSetupSummary;
+  /**
+   * Summary scores only. Private regression inputs, expected outputs,
+   * assertions, and detailed trajectories never cross the MCP boundary.
+   */
+  reliability?: ReliabilitySummary;
 };
 
 export type AgentInvocationResult = {
@@ -157,6 +187,7 @@ function resolveConfig(): {
   manifestUrl: string;
   invokeUrl: string;
   streamUrl: string;
+  reliabilityCheckUrl: string;
   apiKey: string;
 } {
   const argv = process.argv.slice(2);
@@ -190,6 +221,7 @@ function resolveConfig(): {
     // Streaming endpoint — the bridge consumes SSE so long agent
     // runs (60-90s) don't hit the MCP host's request timeout.
     streamUrl: `${manifestUrl}/invoke/stream`,
+    reliabilityCheckUrl: `${manifestUrl}/reliability/check`,
     apiKey,
   };
 }
@@ -299,7 +331,96 @@ async function fetchManifest(
       );
     }
   }
+  if (json.reliability) {
+    if (
+      json.reliability.safeSimulation !== true ||
+      !Number.isInteger(json.reliability.caseCount) ||
+      typeof json.reliability.canRun !== "boolean" ||
+      !Array.isArray(json.reliability.history) ||
+      typeof json.reliability.privacy !== "string"
+    ) {
+      throw new Error(`Manifest at ${url} has an invalid reliability summary.`);
+    }
+  }
   return json;
+}
+
+export async function runReliabilityCheck(
+  url: string,
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ReliabilityRunSummary> {
+  const res = await fetchImpl(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: "application/json",
+    },
+    redirect: "error",
+    signal: AbortSignal.timeout(5 * 60_000),
+  });
+  const body = await readBoundedResponse(
+    res,
+    MAX_MANIFEST_BYTES,
+    res.ok ? "Reliability result" : "Reliability error response",
+  ).catch(() => "");
+  if (!res.ok) {
+    throw new Error(
+      `AgentMug reliability check failed (HTTP ${res.status}): ${body.slice(0, 400)}`,
+    );
+  }
+  try {
+    const parsed = JSON.parse(body) as ReliabilityRunSummary;
+    const expectedAgentId = decodeURIComponent(
+      new URL(url).pathname.split("/").filter(Boolean).at(-3) ?? "",
+    );
+    const validScore = (value: unknown, maximum: number): boolean =>
+      value === undefined ||
+      (typeof value === "number" &&
+        Number.isFinite(value) &&
+        value >= 0 &&
+        value <= maximum);
+    if (
+      typeof parsed?.id !== "string" ||
+      typeof parsed.agentId !== "string" ||
+      parsed.agentId !== expectedAgentId ||
+      !["manual", "release_gate", "external"].includes(parsed.trigger) ||
+      !["running", "completed", "failed"].includes(parsed.status) ||
+      !Number.isInteger(parsed.casesRun) ||
+      parsed.casesRun < 0 ||
+      parsed.casesRun > 20 ||
+      !validScore(parsed.aggregateScore, 100) ||
+      !validScore(parsed.passRate, 1) ||
+      (parsed.durationMs !== undefined &&
+        (!Number.isFinite(parsed.durationMs) || parsed.durationMs < 0)) ||
+      typeof parsed.startedAt !== "string" ||
+      typeof parsed.createdAt !== "string"
+    ) {
+      throw new Error("Reliability result has an invalid summary shape.");
+    }
+    return {
+      id: parsed.id,
+      agentId: parsed.agentId,
+      trigger: parsed.trigger,
+      status: parsed.status,
+      blueprintVersion: parsed.blueprintVersion,
+      aggregateScore: parsed.aggregateScore,
+      passRate: parsed.passRate,
+      casesRun: parsed.casesRun,
+      error:
+        parsed.status === "failed"
+          ? "Reliability check failed safely."
+          : undefined,
+      durationMs: parsed.durationMs,
+      startedAt: parsed.startedAt,
+      completedAt: parsed.completedAt,
+      createdAt: parsed.createdAt,
+    };
+  } catch (error) {
+    throw new Error(
+      `Reliability result was not valid bounded JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 export async function invokeAgent(
@@ -517,6 +638,74 @@ function sourceContractText(manifest: AgentManifest): string {
   );
 }
 
+function reliabilityText(manifest: AgentManifest): string {
+  const reliability = manifest.reliability;
+  const publicRun = (run: ReliabilityRunSummary | null) =>
+    run
+      ? {
+          id: run.id,
+          agentId: run.agentId,
+          trigger: run.trigger,
+          status: run.status,
+          blueprintVersion: run.blueprintVersion,
+          aggregateScore: run.aggregateScore,
+          passRate: run.passRate,
+          casesRun: run.casesRun,
+          error:
+            run.status === "failed"
+              ? "Reliability check failed safely."
+              : undefined,
+          durationMs: run.durationMs,
+          startedAt: run.startedAt,
+          completedAt: run.completedAt,
+          createdAt: run.createdAt,
+        }
+      : null;
+  return JSON.stringify(
+    {
+      agent: {
+        id: manifest.id,
+        name: manifest.name,
+      },
+      reliability: reliability
+        ? {
+            safeSimulation: true,
+            caseCount: reliability.caseCount,
+            canRun: reliability.canRun,
+            latestRun: publicRun(reliability.latestRun),
+            history: reliability.history.map((run) => publicRun(run)),
+            privacy: reliability.privacy,
+          }
+        : {
+            safeSimulation: true,
+            caseCount: 0,
+            canRun: false,
+            latestRun: null,
+            history: [],
+            privacy:
+              "Private regression inputs and detailed trajectories stay in AgentMug.",
+          },
+    },
+    null,
+    2,
+  );
+}
+
+function reliabilityResultText(run: ReliabilityRunSummary): string {
+  if (run.status !== "completed") {
+    return `Reliability check ${run.status}. No live tools were called.`;
+  }
+  const score =
+    typeof run.aggregateScore === "number"
+      ? `${Math.round(run.aggregateScore)}% score`
+      : "score unavailable";
+  const passRate =
+    typeof run.passRate === "number"
+      ? `${Math.round(run.passRate * 100)}% pass rate`
+      : "pass rate unavailable";
+  return `Reliability check completed: ${score}, ${passRate}, ${run.casesRun} case${run.casesRun === 1 ? "" : "s"}. Safe simulation was used; no live tools were called.`;
+}
+
 function sourceSetupBlockers(manifest: AgentManifest): string[] {
   if (!manifest.sources) return [];
   return [...new Set([...manifest.sources.missing, ...manifest.sources.stale])];
@@ -533,12 +722,16 @@ export function createBridgeRequestHandlers(options: {
   initialManifest: AgentManifest;
   loadManifest: () => Promise<AgentManifest>;
   invoke: (args: Record<string, unknown>) => Promise<AgentInvocationResult>;
+  runReliability?: () => Promise<ReliabilityRunSummary>;
 }) {
   let manifest = options.initialManifest;
   const initialAgentId = manifest.id;
   const initialToolName = manifest.tool.name;
   const sourceUri = `agentmug://agents/${encodeURIComponent(initialAgentId)}/source-contract`;
   const receiptUri = `agentmug://agents/${encodeURIComponent(initialAgentId)}/latest-run-receipt`;
+  const reliabilityUri = `agentmug://agents/${encodeURIComponent(initialAgentId)}/reliability`;
+  // Keep the derived control tool within the common MCP 64-character bound.
+  const reliabilityToolName = `${initialToolName.slice(0, 52)}_safe_check`;
   let latestReceipt: RunReceiptSummary | null = null;
 
   const refreshManifest = async (): Promise<AgentManifest> => {
@@ -576,6 +769,20 @@ export function createBridgeRequestHandlers(options: {
               .join(" "),
             inputSchema: current.tool.input_schema,
           } satisfies Tool,
+          ...(current.reliability && options.runReliability
+            ? [
+                {
+                  name: reliabilityToolName,
+                  description:
+                    "Run this worker's owner-private regression suite in safe simulation. This spends model tokens, never calls live tools, and returns summary scores without exposing private test cases.",
+                  inputSchema: {
+                    type: "object" as const,
+                    properties: {},
+                    additionalProperties: false,
+                  },
+                } satisfies Tool,
+              ]
+            : []),
         ],
       };
     },
@@ -591,6 +798,17 @@ export function createBridgeRequestHandlers(options: {
               "Secret-free source requirements and current readiness. Private locators and content never cross MCP.",
             mimeType: "application/json",
           },
+          ...(current.reliability
+            ? [
+                {
+                  uri: reliabilityUri,
+                  name: `${current.name} reliability`,
+                  description:
+                    "Secret-free safe-simulation scores and recent check history. Private test cases stay in AgentMug.",
+                  mimeType: "application/json",
+                },
+              ]
+            : []),
           ...(latestReceipt
             ? [
                 {
@@ -619,6 +837,17 @@ export function createBridgeRequestHandlers(options: {
           ],
         };
       }
+      if (uri === reliabilityUri && current.reliability) {
+        return {
+          contents: [
+            {
+              uri: reliabilityUri,
+              mimeType: "application/json",
+              text: reliabilityText(current),
+            },
+          ],
+        };
+      }
       if (uri === receiptUri && latestReceipt) {
         return {
           contents: [
@@ -636,6 +865,25 @@ export function createBridgeRequestHandlers(options: {
     async callTool(name: string, args: Record<string, unknown>) {
       try {
         const current = await refreshManifest();
+        if (name === reliabilityToolName) {
+          if (!current.reliability || !options.runReliability) {
+            throw new Error(
+              "Reliability checking is not available for this worker.",
+            );
+          }
+          const result = await options.runReliability();
+          return {
+            content: [
+              { type: "text" as const, text: reliabilityResultText(result) },
+            ],
+            structuredContent: {
+              safeSimulation: true,
+              run: result,
+              privacy: current.reliability.privacy,
+            },
+            isError: result.status === "failed",
+          };
+        }
         if (name !== current.tool.name) {
           throw new Error(`Unknown tool: ${name}`);
         }
@@ -677,6 +925,8 @@ async function main(): Promise<void> {
     initialManifest: manifest,
     loadManifest: () => fetchManifest(config.manifestUrl, config.apiKey),
     invoke: (args) => invokeAgent(config, args),
+    runReliability: () =>
+      runReliabilityCheck(config.reliabilityCheckUrl, config.apiKey),
   });
 
   const server = new Server(

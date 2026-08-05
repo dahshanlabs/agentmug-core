@@ -105,7 +105,7 @@ export const OPENAI_COMPAT_PROVIDERS: Record<CompatProvider, CompatProviderInfo>
     label: "Moonshot / Kimi",
     residency: "China",
     keysUrl: "https://platform.moonshot.ai/console/api-keys",
-    exampleModel: "kimi-k2-0905-preview",
+    exampleModel: "kimi-k3",
   },
   qwen: {
     prefixes: ["qwen"],

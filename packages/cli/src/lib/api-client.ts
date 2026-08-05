@@ -19,7 +19,7 @@ export function loadConfig(): ApiClientConfig {
   if (!apiKey) {
     throw new Error(
       "AGENTMUG_API_KEY env var is required for cloud subcommands.\n" +
-        "Generate a key at https://agentmug.com/settings/api-keys and export it:\n" +
+        "Use an account key from Settings, or an agent-scoped key for invoke/reliability:\n" +
         "  export AGENTMUG_API_KEY=am_user_...",
     );
   }
@@ -87,7 +87,9 @@ export async function* streamSse<T>(
   });
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => "");
-    throw new Error(`SSE ${method} ${path} → HTTP ${res.status}: ${text.slice(0, 400)}`);
+    throw new Error(
+      `SSE ${method} ${path} → HTTP ${res.status}: ${text.slice(0, 400)}`,
+    );
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
