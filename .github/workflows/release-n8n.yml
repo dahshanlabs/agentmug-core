@@ -203,7 +203,7 @@ jobs:
           node-version: 22.22.2
 
       - name: Download candidate by immutable artifact ID
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.verify.outputs.artifact_id }}
           path: .
@@ -302,7 +302,7 @@ jobs:
           node-version: 22.22.2
 
       - name: Download candidate by immutable artifact ID
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.verify.outputs.artifact_id }}
           path: .
@@ -400,7 +400,7 @@ jobs:
           node-version: 22.22.2
 
       - name: Download candidate by immutable artifact ID
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.verify.outputs.artifact_id }}
           path: candidate
@@ -557,7 +557,7 @@ jobs:
 
     steps:
       - name: Download evidence by immutable artifact ID
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.verify-registry.outputs.artifact_id }}
           path: .
@@ -603,7 +603,7 @@ jobs:
 
     steps:
       - name: Download evidence by immutable artifact ID
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.verify-registry.outputs.artifact_id }}
           path: .

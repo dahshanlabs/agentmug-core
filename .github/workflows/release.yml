@@ -349,7 +349,7 @@ jobs:
 
       # Download by immutable artifact ID, never by a reusable artifact name.
       - name: Download the verified release capsule
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.verify.outputs.artifact_id }}
           path: .
@@ -749,7 +749,7 @@ jobs:
 
     steps:
       - name: Download exact registry evidence by immutable artifact ID
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.publish.outputs.evidence_artifact_id }}
           path: .
@@ -895,7 +895,7 @@ jobs:
 
     steps:
       - name: Download sealed evidence by immutable artifact ID
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.sbom.outputs.evidence_artifact_id }}
           path: release
@@ -957,7 +957,7 @@ jobs:
 
     steps:
       - name: Download complete evidence by immutable artifact ID
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.sbom.outputs.evidence_artifact_id }}
           path: release
