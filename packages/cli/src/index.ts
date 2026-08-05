@@ -12,6 +12,7 @@
 // run, print. Tools that need local resources (create_reminder
 // writing to an .ics file) take their target path via a flag.
 
+import { randomUUID } from "node:crypto";
 import { readFile, writeFile, access } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
 import { stdin } from "node:process";
@@ -432,7 +433,7 @@ class IcsFileRemindersAdapter implements RemindersAdapter {
     input: ReminderInput,
     _ctx: ReminderContext,
   ): Promise<ReminderResult> {
-    const uid = `${Date.now()}-${Math.random().toString(36).slice(2)}@agentmug-cli`;
+    const uid = `${Date.now()}-${randomUUID()}@agentmug-cli`;
     const vevent = buildVevent(uid, input);
 
     let existing = "";

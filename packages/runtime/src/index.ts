@@ -528,6 +528,7 @@ export {
 } from "./triggers/plan";
 export type { HostCapabilities, UnsupportedTrigger } from "./triggers/plan";
 
+export { toAsciiSlug } from "./format/ascii-slug";
 export {
   AGENT_FILE_SCHEMA_V1,
   parseAgentFile,
