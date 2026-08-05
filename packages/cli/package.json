@@ -34,7 +34,7 @@
     "@types/node": "catalog:",
     "esbuild": "0.28.1",
     "tsx": "catalog:",
-    "typescript": "~5.9.2"
+    "typescript": "~7.0.2"
   },
   "repository": {
     "type": "git",
