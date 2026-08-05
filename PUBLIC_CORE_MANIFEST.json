@@ -11,6 +11,11 @@
       "size": 271
     },
     {
+      "path": ".changeset/installable-cli-package.md",
+      "sha256": "42f42447a670599ce8098e86977e8603be3051188ed7df9826e4dfd9921cbcf7",
+      "size": 258
+    },
+    {
       "path": ".changeset/README.md",
       "sha256": "924220864019f9958928f10da1c6f1b15bbf3918e8650872457389782bb51d90",
       "size": 520
@@ -287,8 +292,8 @@
     },
     {
       "path": "packages/cli/package.json",
-      "sha256": "8f08d1c24313525b1bcd7481bc4ee1c38d7076e866680d2b49b1a376eb1e54fb",
-      "size": 1496
+      "sha256": "b6605d86d9740be868295513b4cbcd2286d1741324edd839c6be585805251887",
+      "size": 1492
     },
     {
       "path": "packages/cli/README.md",
@@ -957,8 +962,8 @@
     },
     {
       "path": "pnpm-lock.yaml",
-      "sha256": "085dfb17f90f9f792dc47cd3ca71939ea16573c2555482e6695de1510a7a2f76",
-      "size": 91713
+      "sha256": "fe66bb0305a8b6e46177edfd36d700158b9c1573219f475d3c0dde29e11b1d3f",
+      "size": 91709
     },
     {
       "path": "pnpm-workspace.yaml",
@@ -1032,8 +1037,8 @@
     },
     {
       "path": "scripts/verify-package-tarballs.mjs",
-      "sha256": "3aaa5a2ea6db907f15ac9de05c07b2fac2d32755051a1813c0ac341ac3e1b9b1",
-      "size": 4468
+      "sha256": "5a5700e436e37a45c33f1de71968a4723569ffe1e77575b57808b7e310698800",
+      "size": 5111
     },
     {
       "path": "scripts/write-bundle-notices.mjs",

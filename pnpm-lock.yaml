@@ -74,7 +74,7 @@ importers:
   packages/cli:
     dependencies:
       '@agentmug/runtime':
-        specifier: workspace:*
+        specifier: ^0.16.0
         version: link:../runtime
       '@anthropic-ai/sdk':
         specifier: ^0.78.0
