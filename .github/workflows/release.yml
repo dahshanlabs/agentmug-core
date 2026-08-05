@@ -1249,18 +1249,26 @@ jobs:
                 --latest=false
             fi
             published_release=""
+            # A newly published release can briefly return 404 by tag while
+            # GitHub's release index reaches consistency. Retry that state too.
             for attempt in {1..10}; do
-              published_release="$(
+              if published_release="$(
                 gh api \
-                  "repos/$GITHUB_REPOSITORY/releases/tags/$encoded_tag"
-              )"
-              if [[ "$(jq -r '.draft' <<<"$published_release")" = false ]] &&
-                 [[ "$(jq -r '.immutable' <<<"$published_release")" = true ]]; then
-                break
+                  "repos/$GITHUB_REPOSITORY/releases/tags/$encoded_tag" \
+                  2>/dev/null
+              )"; then
+                if [[ "$(jq -r '.draft' <<<"$published_release")" = false ]] &&
+                   [[ "$(jq -r '.immutable' <<<"$published_release")" = true ]]; then
+                  break
+                fi
               fi
               test "$attempt" -lt 10
               sleep 2
             done
+            test -n "$published_release" || {
+              echo "Published release did not become readable: $tag" >&2
+              exit 1
+            }
             test "$(jq -r '.draft' <<<"$published_release")" = false
             test "$(jq -r '.immutable' <<<"$published_release")" = true || {
               echo "GitHub release immutability is not enforced for $tag" >&2
