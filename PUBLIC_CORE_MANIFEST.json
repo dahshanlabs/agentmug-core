@@ -16,11 +16,6 @@
       "size": 520
     },
     {
-      "path": ".changeset/resolve-codeql-findings.md",
-      "sha256": "b411e5c7fcdb5a74cdec7aeceb0395f1b6a12a3077467ee406a082d9d9c4a33e",
-      "size": 354
-    },
-    {
       "path": ".editorconfig",
       "sha256": "a6b98ea7cb6d61ed8d430dd0dffa46c87012b5cf859d4ce7207898954951fdcd",
       "size": 188
@@ -97,8 +92,8 @@
     },
     {
       "path": "examples/hello-agent/CHANGELOG.md",
-      "sha256": "4485fb6ea8f148741454ee683cb83ece3089357822951ce90d8c5fdb4430184c",
-      "size": 382
+      "sha256": "5321a17a3c0be0c20086ffeaeecd3b4bbfc3d0f77a174dfa2a10876be38e7e87",
+      "size": 475
     },
     {
       "path": "examples/hello-agent/hello.agent",
@@ -112,7 +107,7 @@
     },
     {
       "path": "examples/hello-agent/package.json",
-      "sha256": "8b1fd041d45ba4bc9ddb2c6b49cfb236e4d9a1f9cad4a7c7d686b57df9d868cd",
+      "sha256": "607a9b27756c666ed6947f15dcedd968a04c10e9e5bf9ecd95561f375c49637c",
       "size": 360
     },
     {
@@ -137,8 +132,8 @@
     },
     {
       "path": "examples/web-research/CHANGELOG.md",
-      "sha256": "eb4e783d8dd595fe7139ef1ef89e8e5920e1ce8432d9fcbe4ee69d17441c3a85",
-      "size": 389
+      "sha256": "031d9d3478e638a9820724c759d66b0f685c7c9c12f195b1e1df5586a8fd0e28",
+      "size": 482
     },
     {
       "path": "examples/web-research/index.ts",
@@ -147,7 +142,7 @@
     },
     {
       "path": "examples/web-research/package.json",
-      "sha256": "4dbad4116a27abef4fdbca3f02adae66a5292f3f96e4c9aa2dbb31617a806256",
+      "sha256": "4c1d74e001eb49aecdb17849dbae0ab798e4896d637d76be7b32e496b5f47e72",
       "size": 367
     },
     {
@@ -287,12 +282,12 @@
     },
     {
       "path": "packages/cli/CHANGELOG.md",
-      "sha256": "73aa90e3cf4f2f02415b9a366c94e637adca8f47b28c19b65791101f57d842cc",
-      "size": 995
+      "sha256": "299a3204439a4193568c1cd9173fa833e2a7c853f98374509b5a32ee039a7066",
+      "size": 1393
     },
     {
       "path": "packages/cli/package.json",
-      "sha256": "c6c1a6ec41bfa1381bfa0fe270194c5c87f05b99f1a46047bc1a616c7e446e73",
+      "sha256": "d78e7a10e4328763d27f5250c423f0ba919a3a926a4694120e58f3dacc0f7721",
       "size": 1492
     },
     {
@@ -447,7 +442,7 @@
     },
     {
       "path": "packages/otel/package.json",
-      "sha256": "c8174f64e7e444eaa84d5bff0914c06bac4566b85166f7708727f477fe14aa4c",
+      "sha256": "022c9165e5e284dc6c843dd6c73e96b4a2205fed9bb56e1d4457390e1b54c78a",
       "size": 1582
     },
     {
@@ -477,12 +472,12 @@
     },
     {
       "path": "packages/runtime/CHANGELOG.md",
-      "sha256": "4d38b8d497b5dbd2b7b93ce255862265ce04fc29bac7922e836cbecb87ba4fda",
-      "size": 1681
+      "sha256": "9cf84f4031eafe75509b7008f25acaed05d3033e2dce366d80f2b79e8a8cc772",
+      "size": 2018
     },
     {
       "path": "packages/runtime/package.json",
-      "sha256": "e0f84412db3171babd7d5e707aa6a7f50ce6559aec47fb2bbcdd7ecc842b6c3c",
+      "sha256": "341f724d7b6d243c106a9d4164b8a587625b54acd57ddc7edd6c6edd6ec03da1",
       "size": 2229
     },
     {

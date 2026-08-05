@@ -1,6 +1,6 @@
 {
   "name": "@agentmug/runtime",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "Runtime for defining and executing portable AI workers. Multi-provider LLM support (Anthropic, OpenAI, Gemini, and OpenAI-compatible vendors), pluggable persistence and tracing adapters, an MCP tool client, streaming, abort, and pause/resume.",
   "license": "Apache-2.0",
   "publishConfig": {

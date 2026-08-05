@@ -1,6 +1,6 @@
 {
   "name": "@agentmug/cli",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Run, inspect, and control AgentMug workers from the command line. Executes the same portable .agent file as the desktop app and cloud, against your own provider key.",
   "license": "Apache-2.0",
   "publishConfig": {
@@ -25,7 +25,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@agentmug/runtime": "^0.16.0",
+    "@agentmug/runtime": "^0.16.1",
     "@anthropic-ai/sdk": "^0.78.0",
     "exceljs": "4.4.0",
     "mammoth": "1.12.0"

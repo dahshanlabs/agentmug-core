@@ -28,7 +28,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@agentmug/runtime": "^0.16.0",
+    "@agentmug/runtime": "^0.16.1",
     "@opentelemetry/api": "^1.0.0"
   },
   "devDependencies": {
