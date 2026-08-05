@@ -16,6 +16,11 @@
       "size": 520
     },
     {
+      "path": ".changeset/resolve-codeql-findings.md",
+      "sha256": "b411e5c7fcdb5a74cdec7aeceb0395f1b6a12a3077467ee406a082d9d9c4a33e",
+      "size": 354
+    },
+    {
       "path": ".editorconfig",
       "sha256": "a6b98ea7cb6d61ed8d430dd0dffa46c87012b5cf859d4ce7207898954951fdcd",
       "size": 188
@@ -302,8 +307,8 @@
     },
     {
       "path": "packages/cli/src/agent-folder-store.ts",
-      "sha256": "c273569c26b908b4ad8c0c729b70c27febf143b6b9657d703e4946576f7ef953",
-      "size": 2308
+      "sha256": "d0391aeaf810dcb4b2afaa329888418409fe5d45347aa5a3110f334000081e5c",
+      "size": 2229
     },
     {
       "path": "packages/cli/src/credential-resolver.ts",
@@ -312,8 +317,8 @@
     },
     {
       "path": "packages/cli/src/index.ts",
-      "sha256": "19d1d43e0a40f5223096d823502fc67e18a170775be4e94498912d4c5ede034d",
-      "size": 56337
+      "sha256": "d39568cc5bb12e43078443c92d0bdc5cacfcc39f3c6a33708f5449c186fbff91",
+      "size": 56356
     },
     {
       "path": "packages/cli/src/klypix-safety.ts",
@@ -552,8 +557,8 @@
     },
     {
       "path": "packages/runtime/src/adapters/llm-multi.test.ts",
-      "sha256": "8219b0760211a06c5821b00fe83075951c9924a5ec8863157ec2113ac3846a19",
-      "size": 13692
+      "sha256": "e2f4b3231bae18b1ebb95b95848b5b481abb57c538f0c00c9dc4e02f20943b09",
+      "size": 13672
     },
     {
       "path": "packages/runtime/src/adapters/llm-multi.ts",
@@ -642,8 +647,13 @@
     },
     {
       "path": "packages/runtime/src/format/agent-file.ts",
-      "sha256": "bbff01a305b896c07e693d65f54bd0f3e49c2300a28adb1206a583520b3245ae",
-      "size": 52800
+      "sha256": "fcb742614dbc89688948b02e7a6692b2bdee8e56efd1de4da8004442cd7ed6fe",
+      "size": 52762
+    },
+    {
+      "path": "packages/runtime/src/format/ascii-slug.ts",
+      "sha256": "45ff24f727382c7c2d9bee075e7ded4295466684ddb4e29c513dd370945c110a",
+      "size": 961
     },
     {
       "path": "packages/runtime/src/identity-grounding.ts",
@@ -652,8 +662,8 @@
     },
     {
       "path": "packages/runtime/src/index.ts",
-      "sha256": "b6cb2c88ac49c9829d3eb23cc47b0caab4e39353fff2057ea0a3521d7f305a9d",
-      "size": 16328
+      "sha256": "3a9072e64b5e4f5e956ac724a9be3ef3761583760ab5ac60a04b7e6ce2da2fd3",
+      "size": 16379
     },
     {
       "path": "packages/runtime/src/inputs/types.ts",
@@ -712,8 +722,8 @@
     },
     {
       "path": "packages/runtime/src/tools/agent-brain.ts",
-      "sha256": "046e59aec263e52787055ef1f707e1d12b6d1130766c7791f4f1586082fe3b95",
-      "size": 8051
+      "sha256": "f7146b9f0aefa03a03fb9f28313c5545a5e24a45c9454b04386f5ecfd341eebd",
+      "size": 8009
     },
     {
       "path": "packages/runtime/src/tools/builtin/a2a-discover.ts",
@@ -882,13 +892,13 @@
     },
     {
       "path": "packages/runtime/src/tools/builtin-executors/fetch-url-executor.ts",
-      "sha256": "1dbd1f1d2923f29ccddeb8b100ba2262d4d607e27a685dff354cf2bd5baada93",
-      "size": 3936
+      "sha256": "1019b1c1c90c7972f5d1bb92da33d91a8dbef34f75a45d0ef761c64bd6569363",
+      "size": 8948
     },
     {
       "path": "packages/runtime/src/tools/builtin-executors/net-guard.test.ts",
-      "sha256": "55feaec853948a57dc6456fc2905db85eb8af42ebba6cbb05b050802b33b8757",
-      "size": 2227
+      "sha256": "2fce7527879cd35293e926f7aaf7991f94d40281bf1da0b51559c49379d56094",
+      "size": 3280
     },
     {
       "path": "packages/runtime/src/tools/builtin-executors/net-guard.ts",

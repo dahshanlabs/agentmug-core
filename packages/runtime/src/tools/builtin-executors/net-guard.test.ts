@@ -3,6 +3,8 @@
 // network. Run: `pnpm --filter @agentmug/runtime run test:net-guard`.
 
 import assert from "node:assert/strict";
+import { toAsciiSlug } from "../../format/ascii-slug";
+import { htmlToText } from "./fetch-url-executor";
 import { isPrivateHost } from "./net-guard";
 
 type Test = { name: string; fn: () => void };
@@ -49,6 +51,30 @@ test("public hosts allowed", () => {
   isPublic("example.com");
   isPublic("api.github.com");
   isPublic("8.8.8.8");
+});
+
+test("HTML conversion removes raw-text elements and respects quoted tag attributes", () => {
+  assert.equal(
+    htmlToText(
+      '<p title="1 > 0">Hello&nbsp;<strong>world</strong></p>' +
+        '<script>if (a < b) x = "</not-script>";</script >' +
+        "<style>hidden</style>" +
+        "<noscript>hidden</noscript><!-- hidden -->",
+    ),
+    "Hello world",
+  );
+});
+
+test("HTML entities decode once and invalid numeric entities remain inert", () => {
+  assert.equal(htmlToText("<p>&amp;lt; &#65; &#55296; &unknown;</p>"), "&lt; A &#55296; &unknown;");
+  assert.equal(htmlToText("2 < 3"), "2 < 3");
+});
+
+test("ASCII slugging is bounded, separator-safe, and linear on long input", () => {
+  assert.equal(toAsciiSlug(" --Alpha---Beta-- ", 48), "alpha-beta");
+  assert.equal(toAsciiSlug(`A${"-".repeat(100_000)}B`, 10), "a-b");
+  assert.equal(toAsciiSlug("alpha beta", 6), "alpha");
+  assert.equal(toAsciiSlug("alpha", Number.NaN), "");
 });
 
 // ─── runner ────────────────────────────────────────────────────────────

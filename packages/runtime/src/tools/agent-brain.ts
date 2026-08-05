@@ -7,6 +7,7 @@
 
 import type { AgentBrainPage } from "../format/agent-file";
 import { buildAgentFile } from "../format/agent-file";
+import { toAsciiSlug } from "../format/ascii-slug";
 import type {
   ToolExecutor,
   ToolExecutionContext,
@@ -34,12 +35,7 @@ const BRAIN_SECTION_HEADER = "## Your knowledge base";
 
 /** Title → stable slug (mirrors the cloud's normalizeBrainSlug). */
 export function normalizeBrainSlug(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, MAX_BRAIN_TITLE_CHARS);
+  return toAsciiSlug(raw, MAX_BRAIN_TITLE_CHARS);
 }
 
 /** Append a source, dedup, keep the most recent MAX_BRAIN_SOURCES. */

@@ -11,18 +11,14 @@ import { dirname, join } from "node:path";
 import {
   parseAgentFile,
   serializeAgentFile,
+  toAsciiSlug,
   type AgentFileV1,
   type AgentFolderStore,
   type StoredAgent,
 } from "@agentmug/runtime";
 
 function slug(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
+  return toAsciiSlug(name, 48);
 }
 
 export class FileAgentFolderStore implements AgentFolderStore {

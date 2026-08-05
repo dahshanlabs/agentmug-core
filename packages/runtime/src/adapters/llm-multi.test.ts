@@ -124,7 +124,7 @@ test("fetch injection: an OpenAI-compat vendor uses the injected fetch + its bas
     compat: { deepseek: { apiKey: "sk-d", baseURL: "https://api.deepseek.com", fetch: cap.fn } },
   });
   await drain(client, "deepseek-chat");
-  assert.ok(cap.calls[0]?.url.startsWith("https://api.deepseek.com"), `routed to ${cap.calls[0]?.url}`);
+  assert.equal(new URL(cap.calls[0]?.url ?? "").origin, "https://api.deepseek.com");
 });
 
 test("every OpenAI-compatible provider preserves its endpoint and tool contract", async () => {

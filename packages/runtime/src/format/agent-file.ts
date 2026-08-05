@@ -19,6 +19,7 @@
 import type { TriggerDefinition } from "../triggers/types";
 import type { EvaluationContract, SourceRequirement } from "../sources/types";
 import { validateEvaluationContract, validateSourceRequirements } from "../sources/validation";
+import { toAsciiSlug } from "./ascii-slug";
 
 /**
  * Schema URL is the canonical version marker. A v2 format would use
@@ -1268,11 +1269,7 @@ function humanProviderLabel(provider: string, scopes: string[]): string {
  * short id suffix to avoid collisions.
  */
 export function suggestedFilename(agent: AgentFileV1): string {
-  const slug = agent.name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
+  const slug = toAsciiSlug(agent.name, 40);
   const idSuffix = agent.id.slice(0, 8);
   return `${slug || "agent"}-${idSuffix}.agent`;
 }
