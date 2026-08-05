@@ -23,7 +23,7 @@
     "format:check": "prettier --check .",
     "verify": "pnpm run lint && pnpm run build && pnpm run typecheck && pnpm run test && pnpm run security:audit && pnpm run security:licenses && pnpm run security:tree && pnpm run pack:verify",
     "changeset": "changeset",
-    "version-packages": "changeset version && node scripts/audit-public-core.mjs --root . --public-repository dahshanlabs/agentmug-core --write-manifest",
+    "version-packages": "changeset version && pnpm install --lockfile-only --ignore-scripts && node scripts/audit-public-core.mjs --root . --public-repository dahshanlabs/agentmug-core --write-manifest",
     "release:publish": "node scripts/guard-public-publish.mjs && changeset publish"
   },
   "packageManager": "pnpm@10.33.3",

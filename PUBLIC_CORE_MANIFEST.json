@@ -267,8 +267,8 @@
     },
     {
       "path": "package.json",
-      "sha256": "4f24bf70b42f09bfe9b8b3357011a2865279e76256080cc42282b30f1fe97bb8",
-      "size": 2828
+      "sha256": "d4edb658163151982c477ed697784857a6da32e22e394c519453bc3ed2787f85",
+      "size": 2877
     },
     {
       "path": "packages/cli/.gitignore",
@@ -962,7 +962,7 @@
     },
     {
       "path": "pnpm-lock.yaml",
-      "sha256": "fe66bb0305a8b6e46177edfd36d700158b9c1573219f475d3c0dde29e11b1d3f",
+      "sha256": "cadcf32493ac3fcf58fc5e521c01c5074be22a2fe146c2f782c5c79694a7e6c6",
       "size": 91709
     },
     {
