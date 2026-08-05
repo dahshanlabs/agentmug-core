@@ -1,5 +1,11 @@
 # @agentmug/runtime
 
+## 0.16.1
+
+### Patch Changes
+
+- b77f824: Harden public runtime and CLI helpers identified by CodeQL: generate reminder IDs with cryptographic randomness, replace regex-based slugging with a bounded linear implementation, parse HTML without filtering regexes or repeated entity decoding, and assert provider routing by exact URL origin.
+
 ## 0.16.0
 
 ### Minor Changes
