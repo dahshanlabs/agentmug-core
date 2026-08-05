@@ -37,6 +37,14 @@ import type {
 } from "./tools/registry";
 import type { ToolDefinition } from "./tools/types";
 import {
+  deriveRunOutcome,
+  isActionResult,
+  proofSatisfies,
+  type ActionOutcome,
+  type RunActionReceipt,
+  type RunOutcomeStatus,
+} from "./actions/types";
+import {
   readsUntrustedContent,
   resolveSideEffectGate,
   sideEffectGateDecision,
@@ -47,6 +55,7 @@ import type { AgentInput } from "./inputs/types";
 import { substituteParameters } from "./format/agent-file";
 import type {
   EvidenceChunk,
+  EvaluationContract,
   ReceiptEvaluation,
   ReceiptSourceRead,
   RunReceipt,
@@ -55,6 +64,10 @@ import type {
   SourceRequirement,
   StructuredCitation,
 } from "./sources/types";
+import {
+  evaluatePortableChecks,
+  portableEvaluationPolicyFailure,
+} from "./sources/evaluation";
 import type {
   KnowledgeAdapter,
   ReceiptAdapter,
@@ -164,6 +177,7 @@ function rateForModel(model: string): TokenRate {
   if (m.includes("glm-4.7")) return { input: 0.6, output: 2.2 };
   if (m.startsWith("glm")) return { input: 1.4, output: 4.4 };
   // Moonshot Kimi
+  if (m === "kimi-k3") return { input: 3, output: 15 };
   if (m.includes("k2.5")) return { input: 0.6, output: 3 };
   if (m.startsWith("kimi") || m.startsWith("moonshot"))
     return { input: 0.95, output: 4 };
@@ -250,7 +264,7 @@ export class AgentNotFoundError extends Error {
 }
 
 export type EngineEvent =
-  | { type: "started"; runId: string }
+  | { type: "started"; runId: string; startedAt: string }
   // Emitted when the agent called ask_user — the run pauses here,
   // the SSE caller relays this event, and POST /api/runs/:id/answer
   // resumes via runAgent({ resumeFromState }).
@@ -261,6 +275,9 @@ export type EngineEvent =
       hint?: string;
       /** Suggested answers for one-tap quick-pick buttons (free-text still allowed). */
       options?: string[];
+      /** False only when the listed options are exhaustive. */
+      allowOther?: boolean;
+      pausedAt: string;
     }
   | { type: "token"; content: string }
   // Streamed extended-thinking text (when the agent enables it). The UI can
@@ -277,6 +294,7 @@ export type EngineEvent =
       id: string;
       name: string;
       input: Record<string, unknown>;
+      startedAt: string;
     }
   // Emitted after the tool resolves (success or error). `ok=false`
   // when the executor threw; `summary` is a one-line preview so the
@@ -294,6 +312,9 @@ export type EngineEvent =
       ok: boolean;
       summary: string;
       output?: Record<string, unknown>;
+      /** Present for a declared real-world effect. `pending` is not success. */
+      action?: RunActionReceipt;
+      completedAt: string;
     }
   | {
       type: "done";
@@ -301,8 +322,11 @@ export type EngineEvent =
       totalTokens: number;
       costCents: number;
       latencyMs: number;
+      /** Honest aggregate of execution plus required real-world actions. */
+      outcomeStatus: RunOutcomeStatus;
       /** Structured proof of source reads/writes/approvals/evaluations. */
       receipt?: RunReceipt;
+      completedAt: string;
     }
   // Mid-run steering: the host queued one or more user messages WHILE the run
   // was in flight (the desktop cockpit's composer stays live during a run). The
@@ -310,7 +334,7 @@ export type EngineEvent =
   // conversation as a user turn; this event lets the UI flip those queued
   // bubbles from "sending…" to delivered.
   | { type: "steering"; messages: string[] }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; occurredAt: string };
 
 export type RunAgentAdapters = {
   persistence: PersistenceAdapter;
@@ -370,6 +394,8 @@ export type RunAgentOptions = {
    * entry point can reach the model without the preflight having run.
    */
   sources: SourceExecutionPlan;
+  /** Optional secret-free declarative checks carried by a portable .agent. */
+  evaluation?: EvaluationContract;
   /**
    * Prior conversation messages to prepend in the LLM message array.
    * Enables multi-turn chat: each turn of a conversation calls runAgent
@@ -513,9 +539,13 @@ export type RunAgentResult = {
   totalTokens: number;
   costCents: number;
   latencyMs: number;
+  /** Honest aggregate of execution plus required real-world actions. */
+  outcomeStatus: RunOutcomeStatus;
   /** Set when status="paused" — what the agent asked the user. */
   pausedQuestion?: string;
   pausedHint?: string;
+  pausedOptions?: string[];
+  pausedAllowOther?: boolean;
   /** Structured proof returned for completed/failed/paused runs. */
   receipt?: RunReceipt;
   /**
@@ -526,6 +556,10 @@ export type RunAgentResult = {
   pausedState?: {
     conversation: LlmMessage[];
     askUserToolUseId: string;
+    question: string;
+    hint?: string;
+    options?: string[];
+    allowOther?: boolean;
     priorTotals: {
       inputTokens: number;
       outputTokens: number;
@@ -962,6 +996,7 @@ export async function runAgent(
     tools,
     contextProvider,
     sources: sourcePlan,
+    evaluation: optionEvaluationContract,
     priorMessages,
     recursionDepth = 0,
     memoryContext,
@@ -970,14 +1005,8 @@ export async function runAgent(
     systemPromptOverride,
     onEvent,
   } = options;
-  const {
-    persistence,
-    tracing,
-    llm,
-    transcription,
-    knowledge,
-    receipts,
-  } = adapters;
+  const { persistence, tracing, llm, transcription, knowledge, receipts } =
+    adapters;
   // Unforgeable admission: the plan proves the required-source preflight ran
   // at construction. A cast or hand-built object throws here, before any
   // model-provider call, tool, or transcription can spend money.
@@ -1001,6 +1030,9 @@ export async function runAgent(
   if (!agent) throw new AgentNotFoundError(agentId);
 
   const blueprint = await persistence.getLatestBlueprint(agentId);
+  // A direct host override is useful for an in-memory `.agent` run. Cloud and
+  // other persisted hosts read the same contract from the immutable blueprint.
+  const evaluationContract = optionEvaluationContract ?? blueprint?.evaluation;
 
   // Inject today's date so the LLM can resolve relative dates
   // ("tomorrow", "next Friday", etc.) correctly. Without this the
@@ -1120,6 +1152,10 @@ export async function runAgent(
   // 400" into "assistant that reacts." Pairs with the api-server auto-including
   // ask_user (+ an SMS fallback for WhatsApp agents) in the tool registry.
   const behaviorDirective = `## Acting like a real assistant
+Never turn an intended action into a completed fact. A tool result of "queued", "accepted", "pending", or "unknown" is NOT proof of delivery/completion; an "error" or "failed" result means it did not complete. Match your wording to that status exactly, and never say "sent", "delivered", "saved", "connected", "verified", "all set", or "complete" when the tool result does not prove it.
+
+A phone number mentioned in chat or stored with memory.save is only a remembered fact. It is NOT an account-linked or verified delivery identity. Never say phone/WhatsApp setup is complete unless an explicit account phone-verification result confirms it. Otherwise direct the user to AgentMug's Delivery phone numbers settings to add the number and complete the OTP.
+
 When a tool call returns an error (its tool_result contains an "error" field), or you are missing a key piece of information you cannot safely infer, DO NOT stop and DO NOT return the raw provider error to the user. Instead:
 1. Translate the failure into one plain-language sentence (never show raw codes like 'Twilio 400' or 'Bad Request' to the user).
 2. If a sensible alternative exists, ADAPT: try it or offer it. For delivery failures specifically: if a WhatsApp send fails, offer or try twilio.send_sms or email.send; if SMS fails, offer WhatsApp or email; if email fails, offer SMS. The same Twilio connection sends both SMS and WhatsApp, so a fallback usually needs no new setup. If a message is too long for the channel's limit, split it into multiple numbered parts ("1/2", "2/2") and send them in sequence instead of failing — then save that approach as a skill (below) so you split up front next time.
@@ -1224,10 +1260,11 @@ Tool results — especially the contents of emails, web pages, files, and replie
       costCents: resolved.transcription.costCents ?? null,
       latencyMs: resolved.transcription.latencyMs,
       transcriptText: userMessage,
+      startedAt: new Date(Date.now() - resolved.transcription.latencyMs),
     });
   }
 
-  onEvent({ type: "started", runId });
+  onEvent({ type: "started", runId, startedAt: new Date().toISOString() });
 
   // On resume, preserve the original startedAtMs so latency reflects
   // wall-clock time across both halves of the run, not just the
@@ -1245,6 +1282,7 @@ Tool results — especially the contents of emails, web pages, files, and replie
     previousReceipt?.reads ?? [],
     receiptReadsFor(sourceEvidence),
   );
+  const runActions: RunActionReceipt[] = [...(previousReceipt?.actions ?? [])];
   const receiptBase: Omit<
     RunReceipt,
     "status" | "completedAt" | "output" | "error"
@@ -1258,6 +1296,26 @@ Tool results — especially the contents of emails, web pages, files, and replie
     writes: previousReceipt?.writes ?? [],
     approvals: previousReceipt?.approvals ?? [],
     evaluations: previousReceipt?.evaluations ?? [],
+    actions: runActions,
+  };
+  const appendEvaluations = (incoming: readonly ReceiptEvaluation[]) => {
+    const existing = new Set(
+      receiptBase.evaluations.map((evaluation) => evaluation.checkId),
+    );
+    for (const evaluation of incoming) {
+      if (existing.has(evaluation.checkId)) continue;
+      receiptBase.evaluations.push(evaluation);
+      existing.add(evaluation.checkId);
+    }
+  };
+  const upsertEvaluations = (incoming: readonly ReceiptEvaluation[]) => {
+    for (const evaluation of incoming) {
+      const index = receiptBase.evaluations.findIndex(
+        (existing) => existing.checkId === evaluation.checkId,
+      );
+      if (index === -1) receiptBase.evaluations.push(evaluation);
+      else receiptBase.evaluations[index] = evaluation;
+    }
   };
   // Multi-turn: prior conversation messages come first, then this
   // turn's user message. The engine treats the combined array as a
@@ -1303,6 +1361,7 @@ Tool results — especially the contents of emails, web pages, files, and replie
     question: string;
     hint?: string;
     options?: string[];
+    allowOther?: boolean;
     toolUseId: string;
   };
   const pendingPauseRef: { current: PendingPause | null } = { current: null };
@@ -1329,13 +1388,19 @@ Tool results — especially the contents of emails, web pages, files, and replie
     // to fetch / Child.kill / etc. and release cleanly on user
     // interrupt instead of leaving zombies behind.
     signal: options.signal,
-    pauseForUser: ({ question, hint, options }) => {
+    pauseForUser: ({ question, hint, options, allowOther }) => {
       // The current tool's id isn't reachable here yet; the engine
       // patches `toolUseId` after executeToolCall returns. Set the
       // question/hint/options now so ask_user is wired even if multiple
       // tools fire in the same batch.
       if (!pendingPauseRef.current) {
-        pendingPauseRef.current = { question, hint, options, toolUseId: "" };
+        pendingPauseRef.current = {
+          question,
+          hint,
+          options,
+          allowOther,
+          toolUseId: "",
+        };
       }
     },
   };
@@ -1368,6 +1433,24 @@ Tool results — especially the contents of emails, web pages, files, and replie
   let llmCalls = resumeFromState?.priorTotals?.llmCalls ?? 0;
 
   try {
+    if (evaluationContract) {
+      upsertEvaluations(
+        evaluatePortableChecks({
+          contract: evaluationContract,
+          phases: ["bind", "pre-run"],
+          requirements: sourceRequirements,
+          bindings: sourceBindings,
+          readSourceIds: sourceEvidence.map((chunk) => chunk.evidence.sourceId),
+          writes: receiptBase.writes,
+        }),
+      );
+      const preRunPolicy = portableEvaluationPolicyFailure({
+        contract: evaluationContract,
+        evaluations: receiptBase.evaluations,
+        approvals: receiptBase.approvals,
+      });
+      if (preRunPolicy?.message) throw new Error(preRunPolicy.message);
+    }
     for (let turn = 0; turn < MAX_TOOL_USE_TURNS; turn++) {
       // Phase 22 cockpit: cooperative abort between turns.
       // The host calls `options.signal.abort()` (e.g. desktop's
@@ -1467,6 +1550,7 @@ Tool results — especially the contents of emails, web pages, files, and replie
           turnCacheCreationTokens,
         ),
         latencyMs: Date.now() - turnStart,
+        startedAt: new Date(turnStart),
       });
 
       conversation.push({ role: "assistant", content: assistantContent });
@@ -1505,11 +1589,13 @@ Tool results — especially the contents of emails, web pages, files, and replie
         if (options.signal?.aborted) {
           throw new DOMException("Run aborted", "AbortError");
         }
+        const toolStartedAt = Date.now();
         onEvent({
           type: "tool_start",
           id: block.id,
           name: block.name,
           input: block.input,
+          startedAt: new Date(toolStartedAt).toISOString(),
         });
         // Stamp the current tool_use id on the context so executors
         // can correlate their streaming output with the engine's
@@ -1517,7 +1603,9 @@ Tool results — especially the contents of emails, web pages, files, and replie
         // to publish to a per-id bridge that the LiveTerminalCard
         // subscribes to.
         toolContext.currentToolUseId = block.id;
-        const toolStartedAt = Date.now();
+        const effect = tools.get(block.name)?.definition.effect;
+        let actionReceipt: RunActionReceipt | undefined;
+        let returnedActionOutcome: ActionOutcome | undefined;
         // Same-turn side-effect gate: if armed (an untrusted read happened
         // earlier this run) and this is a side-effecting tool, refuse instead
         // of executing — the synthetic tool_result keeps the tool_use/result
@@ -1538,6 +1626,34 @@ Tool results — especially the contents of emails, web pages, files, and replie
             content: JSON.stringify({ error: gateDecision.message }),
           } as LlmContentBlock;
         } else {
+          if (effect) {
+            const now = new Date().toISOString();
+            actionReceipt = {
+              id: randomUUID(),
+              runId,
+              agentId,
+              userId,
+              toolCallId: block.id,
+              toolName: block.name,
+              provider: effect.provider,
+              operation: effect.operation,
+              requiredProof: effect.requiredProof,
+              verification: effect.verification,
+              required: effect.required !== false,
+              status: "pending",
+              proof: "none",
+              providerStatusRank: 0,
+              idempotencyKey: `${runId}:${block.id}`,
+              message: "Waiting for the provider outcome.",
+              startedAt: now,
+              updatedAt: now,
+            };
+            runActions.push(actionReceipt);
+            toolContext.currentActionId = actionReceipt.id;
+            // Fail closed when a host has enabled a durable action ledger: the
+            // intent must exist before the external side effect can happen.
+            await persistence.saveRunAction?.(actionReceipt);
+          }
           // Per-tool interruption: a fresh controller for THIS tool that aborts
           // on either a run-wide abort (cascade — preserves Cmd+. semantics) or a
           // host-triggered "apply my steering now" (reason "steer"). Executors
@@ -1555,7 +1671,9 @@ Tool results — especially the contents of emails, web pages, files, and replie
           const prevSignal = toolContext.signal;
           toolContext.signal = toolController.signal;
           try {
-            result = await executeToolCall(block, tools, toolContext);
+            const executed = await executeToolCall(block, tools, toolContext);
+            result = executed.block;
+            returnedActionOutcome = executed.action;
           } catch (err) {
             // A run-wide abort is a real failure — let it propagate.
             if (options.signal?.aborted) throw err;
@@ -1582,9 +1700,49 @@ Tool results — especially the contents of emails, web pages, files, and replie
             options.signal?.removeEventListener("abort", cascadeRunAbort);
             options.clearToolInterrupt?.();
             toolContext.signal = prevSignal;
+            toolContext.currentActionId = undefined;
           }
         }
         const parsedResult = parseToolResultPayload(result);
+        if (actionReceipt) {
+          const fallbackOutcome: ActionOutcome = parsedResult.error
+            ? {
+                status: "failed",
+                proof: "none",
+                retryable: false,
+                message: parsedResult.error,
+                error: { message: parsedResult.error },
+              }
+            : {
+                status: "unknown",
+                proof: "none",
+                retryable: false,
+                message:
+                  "The tool finished without verifiable evidence of the external outcome.",
+              };
+          const outcome = returnedActionOutcome ?? fallbackOutcome;
+          const normalizedStatus =
+            outcome.status === "succeeded" &&
+            !proofSatisfies(outcome.proof, actionReceipt.requiredProof)
+              ? "unknown"
+              : outcome.status;
+          const updatedAt = new Date().toISOString();
+          const updatedAction: RunActionReceipt = {
+            ...actionReceipt,
+            ...outcome,
+            status: normalizedStatus,
+            updatedAt,
+            ...(["succeeded", "failed"].includes(normalizedStatus)
+              ? { completedAt: updatedAt }
+              : {}),
+          };
+          const actionIndex = runActions.findIndex(
+            (item) => item.id === updatedAction.id,
+          );
+          if (actionIndex >= 0) runActions[actionIndex] = updatedAction;
+          actionReceipt = updatedAction;
+          await persistence.saveRunAction?.(updatedAction);
+        }
         // Arm the gate after a SUCCESSFUL untrusted read (so a failed read
         // doesn't arm it, and the tool that just read can't gate itself).
         if (!parsedResult.error && readsUntrustedContent(block.name)) {
@@ -1596,14 +1754,20 @@ Tool results — especially the contents of emails, web pages, files, and replie
         // get just the summary — the LLM still gets the full
         // tool_result via the conversation.
         const richOutput = pickRichOutput(block.name, parsedResult.data);
-        const toolSummary = summarizeToolResult(parsedResult);
+        const toolSummary =
+          actionReceipt?.message ?? summarizeToolResult(parsedResult);
+        const toolCompletedAt = new Date();
         onEvent({
           type: "tool_complete",
           id: block.id,
           name: block.name,
-          ok: !parsedResult.error,
+          ok:
+            !parsedResult.error &&
+            (!actionReceipt || actionReceipt.status === "succeeded"),
           summary: toolSummary,
           output: richOutput,
+          ...(actionReceipt ? { action: actionReceipt } : {}),
+          completedAt: toolCompletedAt.toISOString(),
         });
         // Conductor fan-out: record each tool call as a trace event (optional
         // adapter — cloud persists it; consoles ignore). invoke_agent calls
@@ -1617,9 +1781,12 @@ Tool results — especially the contents of emails, web pages, files, and replie
             name: block.name,
             input: JSON.stringify(block.input ?? {}).slice(0, 2000),
             output: toolSummary.slice(0, 2000),
-            status: parsedResult.error ? "error" : "success",
+            status: parsedResult.error
+              ? "error"
+              : (actionReceipt?.status ?? "success"),
             depth: recursionDepth,
-            latencyMs: Date.now() - toolStartedAt,
+            latencyMs: toolCompletedAt.getTime() - toolStartedAt,
+            startedAt: new Date(toolStartedAt),
           });
         } catch {
           /* tracing is non-critical */
@@ -1658,6 +1825,10 @@ Tool results — especially the contents of emails, web pages, files, and replie
         const pausedStateForReturn = {
           conversation,
           askUserToolUseId: pp.toolUseId,
+          question: pp.question,
+          hint: pp.hint,
+          options: pp.options,
+          allowOther: pp.allowOther,
           priorTotals: {
             inputTokens: totalInputTokens,
             outputTokens: totalOutputTokens,
@@ -1667,22 +1838,30 @@ Tool results — especially the contents of emails, web pages, files, and replie
             untrustedReadArmed: untrustedReadThisTurn,
           },
         };
+        const pausedAt = new Date();
         if (persistence.pauseRun) {
           await persistence.pauseRun({
             id: runId,
             question: pp.question,
             hint: pp.hint,
+            options: pp.options,
+            allowOther: pp.allowOther,
             state: pausedStateForReturn,
-            pausedAt: new Date(),
+            pausedAt,
             totalTokens: pausedTotalTokens,
             costCents: pausedCostCents,
             latencyMs: pausedLatency,
             llmCalls,
           });
         }
+        const pausedOutcomeStatus = deriveRunOutcome("paused", runActions);
         const pausedReceipt = await persistReceipt(receipts, {
           ...receiptBase,
           status: "paused",
+          metadata: {
+            ...(previousReceipt?.metadata ?? {}),
+            outcomeStatus: pausedOutcomeStatus,
+          },
         });
         onEvent({
           type: "paused",
@@ -1690,6 +1869,8 @@ Tool results — especially the contents of emails, web pages, files, and replie
           question: pp.question,
           hint: pp.hint,
           options: pp.options,
+          allowOther: pp.allowOther,
+          pausedAt: pausedAt.toISOString(),
         });
         return {
           runId,
@@ -1698,8 +1879,11 @@ Tool results — especially the contents of emails, web pages, files, and replie
           totalTokens: pausedTotalTokens,
           costCents: pausedCostCents,
           latencyMs: pausedLatency,
+          outcomeStatus: pausedOutcomeStatus,
           pausedQuestion: pp.question,
           pausedHint: pp.hint,
+          pausedOptions: pp.options,
+          pausedAllowOther: pp.allowOther,
           pausedState: pausedStateForReturn,
           receipt: pausedReceipt,
         };
@@ -1747,7 +1931,32 @@ Tool results — especially the contents of emails, web pages, files, and replie
       sourceEvidence,
       citationResolution,
     );
-    receiptBase.evaluations.push(...citationEvaluations);
+    appendEvaluations(citationEvaluations);
+    let portablePolicyMessage = "";
+    if (evaluationContract) {
+      upsertEvaluations(
+        evaluatePortableChecks({
+          contract: evaluationContract,
+          phases: ["post-run"],
+          requirements: sourceRequirements,
+          bindings: sourceBindings,
+          readSourceIds: sourceEvidence.map((chunk) => chunk.evidence.sourceId),
+          citations: citationResolution.citations,
+          writes: receiptBase.writes,
+          output: visibleOutput,
+        }),
+      );
+      const policy = portableEvaluationPolicyFailure({
+        contract: evaluationContract,
+        evaluations: receiptBase.evaluations,
+        approvals: receiptBase.approvals,
+        includeMinimumScore: true,
+      });
+      if (policy?.minimumScoreEvaluation) {
+        upsertEvaluations([policy.minimumScoreEvaluation]);
+      }
+      portablePolicyMessage = policy?.message ?? "";
+    }
     const failedCitation = citationEvaluations.find(
       (evaluation) => evaluation.status === "failed",
     );
@@ -1756,8 +1965,10 @@ Tool results — especially the contents of emails, web pages, files, and replie
         `${failedCitation.message} The run was rejected rather than presenting an ungrounded result.`,
       );
     }
+    if (portablePolicyMessage) throw new Error(portablePolicyMessage);
 
     const completedAt = new Date();
+    const outcomeStatus = deriveRunOutcome("completed", runActions);
     await persistence.completeRun({
       id: runId,
       output: visibleOutput,
@@ -1766,6 +1977,7 @@ Tool results — especially the contents of emails, web pages, files, and replie
       latencyMs,
       llmCalls,
       completedAt,
+      outcomeStatus,
     });
 
     await persistence.incrementAgentRunCount(agentId);
@@ -1782,6 +1994,10 @@ Tool results — especially the contents of emails, web pages, files, and replie
         contentHash: await sha256Text(visibleOutput),
         evidence: sourceEvidence.map((chunk) => chunk.evidence),
       },
+      metadata: {
+        ...(previousReceipt?.metadata ?? {}),
+        outcomeStatus,
+      },
     });
 
     onEvent({
@@ -1790,7 +2006,9 @@ Tool results — especially the contents of emails, web pages, files, and replie
       totalTokens,
       costCents,
       latencyMs,
+      outcomeStatus,
       receipt: completedReceipt,
+      completedAt: completedAt.toISOString(),
     });
 
     return {
@@ -1800,6 +2018,7 @@ Tool results — especially the contents of emails, web pages, files, and replie
       totalTokens,
       costCents,
       latencyMs,
+      outcomeStatus,
       receipt: completedReceipt,
     };
   } catch (err: unknown) {
@@ -1817,10 +2036,12 @@ Tool results — especially the contents of emails, web pages, files, and replie
         ? err.message
         : String(err);
     const failedAt = new Date();
+    const outcomeStatus = deriveRunOutcome("failed", runActions);
     await persistence.failRun({
       id: runId,
       output: message,
       completedAt: failedAt,
+      outcomeStatus,
     });
     const failedReceipt = await persistReceipt(receipts, {
       ...receiptBase,
@@ -1830,8 +2051,12 @@ Tool results — especially the contents of emails, web pages, files, and replie
         code: aborted ? "aborted" : "run_failed",
         message,
       },
+      metadata: {
+        ...(previousReceipt?.metadata ?? {}),
+        outcomeStatus,
+      },
     });
-    onEvent({ type: "error", message });
+    onEvent({ type: "error", message, occurredAt: failedAt.toISOString() });
     return {
       runId,
       status: "failed",
@@ -1839,6 +2064,7 @@ Tool results — especially the contents of emails, web pages, files, and replie
       totalTokens: totalInputTokens + totalOutputTokens,
       costCents: 0,
       latencyMs: Date.now() - startTime,
+      outcomeStatus,
       receipt: failedReceipt,
     };
   }
@@ -1933,32 +2159,47 @@ function summarizeToolResult(parsed: {
   return String(d).slice(0, 200);
 }
 
+type ExecutedToolCall = {
+  block: LlmContentBlock;
+  action?: ActionOutcome;
+};
+
 async function executeToolCall(
   block: LlmToolUseBlock,
   registry: ToolRegistry,
   context: ToolExecutionContext,
-): Promise<LlmContentBlock> {
+): Promise<ExecutedToolCall> {
   const tool = registry.get(block.name);
   if (!tool) {
     return {
-      type: "tool_result",
-      tool_use_id: block.id,
-      content: JSON.stringify({ error: `Unknown tool: ${block.name}` }),
+      block: {
+        type: "tool_result",
+        tool_use_id: block.id,
+        content: JSON.stringify({ error: `Unknown tool: ${block.name}` }),
+      },
     };
   }
   try {
     const result = await tool.executor.execute(block.input, context);
+    const envelope = isActionResult(result) ? result : null;
     return {
-      type: "tool_result",
-      tool_use_id: block.id,
-      content: JSON.stringify(result ?? {}),
+      block: {
+        type: "tool_result",
+        tool_use_id: block.id,
+        content: JSON.stringify(
+          envelope ? (envelope.value ?? {}) : (result ?? {}),
+        ),
+      },
+      ...(envelope ? { action: envelope.action } : {}),
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     return {
-      type: "tool_result",
-      tool_use_id: block.id,
-      content: JSON.stringify({ error: message }),
+      block: {
+        type: "tool_result",
+        tool_use_id: block.id,
+        content: JSON.stringify({ error: message }),
+      },
     };
   }
 }
@@ -2040,26 +2281,40 @@ async function resolveUserMessage(
     };
   }
   if (input.type === "image") {
-    // Convert Buffer / ArrayBuffer / string to base64 string. Strings
-    // are assumed already base64-encoded (no data:... prefix).
-    let base64: string;
-    if (typeof input.data === "string") {
-      // Strip a data URL prefix if present.
-      base64 = input.data.replace(/^data:[^,]+,/, "");
-    } else if (input.data instanceof ArrayBuffer) {
-      base64 = Buffer.from(new Uint8Array(input.data)).toString("base64");
-    } else {
-      base64 = Buffer.from(input.data as Uint8Array).toString("base64");
-    }
     return {
       text:
         input.text && input.text.trim()
           ? input.text.trim()
           : "[Image attached]",
-      images: [{ data: base64, mediaType: input.mimeType || "image/png" }],
+      images: [
+        {
+          data: imageDataToBase64(input.data),
+          mediaType: input.mimeType || "image/png",
+        },
+      ],
+    };
+  }
+  if (input.type === "multimodal") {
+    if (input.images.length === 0) {
+      return { text: input.text?.trim() || "" };
+    }
+    return {
+      text: input.text?.trim() || "[Images attached]",
+      images: input.images.map((image) => ({
+        data: imageDataToBase64(image.data),
+        mediaType: image.mimeType || "image/png",
+      })),
     };
   }
   throw new Error(
     `Unsupported input type: ${(input as { type: string }).type}`,
   );
+}
+
+function imageDataToBase64(data: Buffer | ArrayBuffer | string): string {
+  if (typeof data === "string") return data.replace(/^data:[^,]+,/, "");
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(new Uint8Array(data)).toString("base64");
+  }
+  return Buffer.from(data as Uint8Array).toString("base64");
 }

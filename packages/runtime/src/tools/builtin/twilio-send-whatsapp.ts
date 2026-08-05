@@ -16,6 +16,13 @@ export const twilioSendWhatsappDefinition: InlineToolDefinition = {
   name: "twilio.send_whatsapp",
   description:
     "Send a WhatsApp message via the user's connected Twilio account (the SAME connection as twilio.send_sms — Twilio sends both). Use for 'message me on WhatsApp' or WhatsApp replies. The recipient must have messaged the Twilio WhatsApp number in the last 24h, or the body must be an approved template.",
+  effect: {
+    provider: "twilio",
+    operation: "whatsapp.message.deliver",
+    requiredProof: "delivered",
+    verification: "callback",
+    required: true,
+  },
   inputSchema: {
     type: "object",
     properties: {

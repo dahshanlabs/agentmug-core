@@ -4,8 +4,10 @@ import { test } from "node:test";
 import {
   createBridgeRequestHandlers,
   invokeAgent,
+  runReliabilityCheck,
   type AgentInvocationResult,
   type AgentManifest,
+  type ReliabilityRunSummary,
 } from "./index";
 
 function manifest(
@@ -54,6 +56,30 @@ const readySources: NonNullable<AgentManifest["sources"]> = {
   ],
   missing: [],
   stale: [],
+};
+
+const completedReliabilityRun: ReliabilityRunSummary = {
+  id: "eval-1",
+  agentId: "agent-1",
+  trigger: "external",
+  status: "completed",
+  blueprintVersion: 3,
+  aggregateScore: 92,
+  passRate: 0.8,
+  casesRun: 5,
+  durationMs: 1200,
+  startedAt: "2026-08-04T10:00:00.000Z",
+  completedAt: "2026-08-04T10:00:01.200Z",
+  createdAt: "2026-08-04T10:00:00.000Z",
+};
+
+const reliability: NonNullable<AgentManifest["reliability"]> = {
+  safeSimulation: true,
+  caseCount: 5,
+  canRun: true,
+  latestRun: completedReliabilityRun,
+  history: [completedReliabilityRun],
+  privacy: "Private regression cases stay in AgentMug.",
 };
 
 test("every MCP request refreshes readiness and a newly blocked source prevents invocation", async () => {
@@ -205,4 +231,70 @@ test("a terminal done event is accepted even when it is the final unterminated l
 
   assert.equal(result.runId, "run-final");
   assert.equal(result.output, "Grounded answer");
+});
+
+test("MCP exposes reliability summaries and delegates an explicit safe check without private cases", async () => {
+  const initial = { ...manifest("Reliable worker", readySources), reliability };
+  let checks = 0;
+  const handlers = createBridgeRequestHandlers({
+    initialManifest: initial,
+    loadManifest: async () => initial,
+    invoke: async () => {
+      throw new Error(
+        "the worker tool should not run during a reliability check",
+      );
+    },
+    runReliability: async () => {
+      checks += 1;
+      return completedReliabilityRun;
+    },
+  });
+
+  const tools = await handlers.listTools();
+  assert.deepEqual(
+    tools.tools.map((tool) => tool.name),
+    ["grounded_agent", "grounded_agent_safe_check"],
+  );
+
+  const resources = await handlers.listResources();
+  const reliabilityResource = resources.resources.find((resource) =>
+    resource.uri.endsWith("/reliability"),
+  );
+  assert.ok(reliabilityResource);
+  const read = await handlers.readResource(reliabilityResource.uri);
+  const text = read.contents[0]?.text ?? "";
+  assert.match(text, /92/);
+  assert.doesNotMatch(text, /private input|expected output|assertion/i);
+
+  const checked = await handlers.callTool("grounded_agent_safe_check", {});
+  assert.equal(checked.isError, false);
+  assert.equal(checks, 1);
+  assert.match(checked.content[0]?.text ?? "", /safe simulation/i);
+  assert.equal(checked.structuredContent?.safeSimulation, true);
+});
+
+test("reliability HTTP responses are bounded and strip unexpected detailed results", async () => {
+  const responseWithPrivateDetails = {
+    ...completedReliabilityRun,
+    results: [
+      {
+        input: "PRIVATE INPUT",
+        expectedOutput: "PRIVATE EXPECTATION",
+      },
+    ],
+  };
+  const fetchImpl = (async () =>
+    new Response(JSON.stringify(responseWithPrivateDetails), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+
+  const result = await runReliabilityCheck(
+    "https://agentmug.example/api/external/agents/agent-1/reliability/check",
+    "am_agent_test",
+    fetchImpl,
+  );
+  assert.equal(result.aggregateScore, 92);
+  assert.equal("results" in result, false);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE/);
 });

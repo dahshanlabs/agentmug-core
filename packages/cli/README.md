@@ -48,7 +48,7 @@ agentmug sources check finance.agent
 agentmug run finance.agent --input "Which invoices are overdue?"
 agentmug sources unbind finance.agent invoice_workbook
 
-# Inspect or explicitly remove private grounding receipts
+# Inspect or explicitly remove local run receipts
 agentmug receipts list finance.agent
 agentmug receipts get finance.agent <run-id>
 agentmug receipts delete finance.agent <run-id>
@@ -111,13 +111,17 @@ model. Evidence is marked as untrusted data, cited by source/revision and
 relative path, and recorded in a private structured run receipt. For sourced
 runs, `--json` includes that receipt; interactive output prints a one-line
 receipt summary. Neither form contains the private bound root path.
+An evaluation-only `.agent` also receives a local receipt even when it has no
+sources. That receipt records every portable declarative check as passed,
+failed, or skipped, so the evidence belongs to the host that actually ran the
+file.
 Receipts also record the agent version, the prompt/tool/source authority
 fingerprint, and any `read:on-bind` approval used by the run. Private retention
 is capped at 1,000 receipts / 100 MB; persistence failure is surfaced in JSON
 and warned on stderr (including `--quiet`). Use `receipts list|get|delete` for
 explicit lifecycle management; the CLI never silently deletes audit records.
 
-## Coming in v0.2 — the agent-controllable surface
+## Hosted worker controls
 
 These commands hit `agentmug.com` over HTTPS with a user API key:
 
@@ -130,17 +134,28 @@ agentmug get email-triage
 agentmug fork email-triage --as personal-email
 agentmug invoke email-triage --input "Summarize unread from this week"
 agentmug key new --agent email-triage
+agentmug reliability status email-triage
+agentmug reliability check email-triage
 ```
+
+`reliability check` runs the hosted worker's owner-private regression suite in
+safe simulation. It spends model tokens but never calls live connected tools.
+The CLI receives summary scores only; private inputs, expected outputs,
+assertions, and detailed trajectories stay in AgentMug. This checks the hosted
+worker version. It does not claim to test a locally modified `.agent` file.
+
+Account-wide commands require an `am_user_` key. `invoke` and `reliability`
+also accept an `am_agent_` key scoped to the selected hosted worker.
 
 Together with `shell.execute` on AgentMug Desktop, this makes the **agent-builds-agent** flow real: an agent can describe what it wants and ship a working `.agent` file into your AgentMug account.
 
 ## Configuration
 
-| Env var | Used for | Default |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | Local `run` command | (required for local runs) |
-| `AGENTMUG_HOST` | Cloud subcommands | `https://agentmug.com` |
-| `AGENTMUG_API_KEY` | Cloud subcommands (v0.2+) | (required for cloud calls) |
+| Env var              | Used for                            | Default                      |
+| -------------------- | ----------------------------------- | ---------------------------- |
+| `ANTHROPIC_API_KEY`  | Local `run` command                 | (required for local runs)    |
+| `AGENTMUG_HOST`      | Cloud subcommands                   | `https://agentmug.com`       |
+| `AGENTMUG_API_KEY`   | Cloud subcommands (v0.2+)           | (required for cloud calls)   |
 | `AGENTMUG_STATE_DIR` | Private local bindings and receipts | Platform app-state directory |
 
 ## Sister packages

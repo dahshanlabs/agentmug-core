@@ -2,7 +2,7 @@
 
 Runtime for defining and executing **portable AI workers**. One engine reads the same `.agent` file in AgentMug Cloud, on the desktop (Tauri), from the CLI, and embedded in your own Node service.
 
-> **Terminology.** *Worker* is the product concept; **`.agent`** is the portable format, and this package's API keeps `agent` throughout.
+> **Terminology.** _Worker_ is the product concept; **`.agent`** is the portable format, and this package's API keeps `agent` throughout.
 >
 > **Host parity is partial, not identical.** The engine, format, streaming, and pause/resume behave the same everywhere, but each host supplies its own tool executors — so tool catalogs genuinely differ. A tool that is not registered on a host returns an `Unknown tool` result for that call and the run continues. Check what a given host actually wired before assuming parity.
 
@@ -16,7 +16,9 @@ npm install @agentmug/runtime
 import { quickRun, parseAgentFile } from "@agentmug/runtime";
 import { readFileSync } from "node:fs";
 
-const agentFile = parseAgentFile(JSON.parse(readFileSync("./hello.agent", "utf8")));
+const agentFile = parseAgentFile(
+  JSON.parse(readFileSync("./hello.agent", "utf8")),
+);
 
 const result = await quickRun({
   agentFile,
@@ -37,9 +39,10 @@ That's the whole API for a quickstart. `quickRun()` wires in-memory persistence 
 - **Streaming events** — `started`, `token`, `tool_start`, `tool_complete`, `paused`, `error`, `done`.
 - **Abort + pause/resume** — `AbortSignal` aborts mid-run (cuts the in-flight LLM stream). `ask_user` pauses for input; resume from a snapshot.
 - **Learns durable preferences** — runs carry a "learn from feedback" directive, so when a user states a lasting preference the agent can write it into its own instructions as a new, reversible version. This is prompt-mediated and human-reviewable — it is **not** autonomous self-optimization.
-- **Tool registry** — built-in tool *definitions* (Gmail, Slack, GitHub, Calendar, web search/browse, image gen, code exec, memory, shell, Twilio/WhatsApp/Telegram/Discord, Sheets, and more), plus pluggable MCP and HTTP tools. **Executors are supplied by the host**, so which of these actually run depends on where you run it.
-- **MCP tool client** — call out to MCP servers (LangGraph, Continue toolbox, etc.). To be called *as* an MCP server, use [`@agentmug/mcp-bridge`](https://npmjs.com/package/@agentmug/mcp-bridge), which proxies to a hosted worker; this package does not contain an MCP server.
+- **Tool registry** — built-in tool _definitions_ (Gmail, Slack, GitHub, Calendar, web search/browse, image gen, code exec, memory, shell, Twilio/WhatsApp/Telegram/Discord, Sheets, and more), plus pluggable MCP and HTTP tools. **Executors are supplied by the host**, so which of these actually run depends on where you run it.
+- **MCP tool client** — call out to MCP servers (LangGraph, Continue toolbox, etc.). To be called _as_ an MCP server, use [`@agentmug/mcp-bridge`](https://npmjs.com/package/@agentmug/mcp-bridge), which proxies to a hosted worker; this package does not contain an MCP server.
 - **Portable `.agent` files** — declarative JSON spec (system prompt + tools + parameters + inputs/outputs + source requirements). Version-controllable. Forkable.
+- **Portable evaluation contracts** — deterministic source-readiness, freshness, citation, write-boundary, and bounded JSON-output checks execute in the engine and appear in the same run receipt in cloud, CLI, desktop, and embedded hosts. Prose-only invariants are explicitly skipped unless a host supplies a private regression suite; they are never reported as passed by guesswork.
 - **Verified sources + receipts** — a worker declares what evidence its job requires; the host binds the private material at runtime (files, folders, workspaces, providers, or KLYPIX brain snapshots). A required source that is missing, unauthorized, stale, or unreadable fails **before the first LLM call**, retrieved evidence carries citations and revisions, and every run returns a structured receipt of what it read. Sources are **read-only** — no adapter implements `write()`, and there is no upstream sync. Which source kinds are readable depends on the host adapter.
 
 ## The `.agent` file format
@@ -93,10 +96,9 @@ import { checkArtifactCompatibility } from "@agentmug/runtime";
 
 const result = checkArtifactCompatibility(fileParameter, {
   filename: "my-invoices.xlsx",
-  mimeType:
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   kind: "table",
-  structure: ["Sheet \"Invoices\" columns: invoice_id, amount, due_date"],
+  structure: ['Sheet "Invoices" columns: invoice_id, amount, due_date'],
 });
 
 if (!result.compatible) throw new Error(result.message);
@@ -208,29 +210,47 @@ relabel a chunk as another source. Evidence can inform an answer but can never
 authorize a write, send, delete, credential use, or permission change.
 
 The engine-populated `RunReceipt` records source reads, revisions, evidence
-references, output hash, and final status. The portable receipt schema also
-has typed fields for writes, approvals, and evaluation results as hosts wire
-those execution seams. If receipt persistence is unavailable after a
+references, output hash, final status, and portable evaluation results. If
+receipt persistence is unavailable after a
 successful run, the engine does not repeat completed side effects: it returns
 the receipt with
 `metadata.receiptPersistence === "failed"` so the host can surface the audit
 storage outage honestly.
 
+### Portable checks and private reliability suites
+
+Top-level `evaluation` is the cross-host, secret-free contract. The runtime
+supports deterministic checks for `source-ready`, `freshness`, `citation`,
+`write-boundary`, and a bounded subset of JSON Schema through `output-schema`.
+Its `failurePolicy` can warn, block, or require a recorded approval, and an
+optional `minimumScore` is evaluated in the receipt.
+
+`invariant` and `custom` assertions are declarative prose, never executable
+code. The portable runtime records them as `skipped` unless a host has a
+deterministic implementation. With a blocking policy, a skipped error-level
+check blocks the run rather than claiming success.
+
+Private test inputs, expected outputs, judge traces, and regression history do
+not belong in a shareable `.agent`. AgentMug Cloud keeps those fixtures in the
+owner's private reliability suite. CLI and hosted MCP can trigger that cloud
+suite when authenticated, but the result proves the hosted blueprint only. A
+locally modified `.agent` is proven by its own portable receipt.
+
 ## Adapters — the universality lever
 
 The runtime knows nothing about where it's running. Everything that touches the outside world is an adapter:
 
-| Adapter | What it does | Example impls |
-|---|---|---|
-| `LlmClient` | Sends messages, streams tokens | `AnthropicLlmClient`, `OpenAiLlmClient`, `GeminiLlmClient`, or write your own |
-| `PersistenceAdapter` | Creates/updates run records | Postgres (cloud), in-memory (CLI), `.agent` file (desktop) |
-| `TracingAdapter` | Records LLM call telemetry | Postgres, console, OpenTelemetry |
-| `TranscriptionAdapter` | Audio → text | Gemini live |
-| `RemindersAdapter` | Where reminders land | iCloud CalDAV, local `.ics`, Postgres |
-| `SourceAdapter` | Inspects and **reads** one bound source | Local files (CLI/desktop), indexed documents (cloud). No first-party impl writes — `write()` is unimplemented everywhere |
-| `KnowledgeAdapter` | Retrieves cited source evidence | Interface only — no first-party implementation ships yet |
-| `BrainAdapter` | Stores curated decisions and durable understanding | Klypix `.klypix` file reader (CLI/desktop) |
-| `ReceiptAdapter` | Persists structured proof of each run | Postgres (cloud), on-disk (CLI), in-memory (desktop) |
+| Adapter                | What it does                                       | Example impls                                                                                                            |
+| ---------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `LlmClient`            | Sends messages, streams tokens                     | `AnthropicLlmClient`, `OpenAiLlmClient`, `GeminiLlmClient`, or write your own                                            |
+| `PersistenceAdapter`   | Creates/updates run records                        | Postgres (cloud), in-memory (CLI), `.agent` file (desktop)                                                               |
+| `TracingAdapter`       | Records LLM call telemetry                         | Postgres, console, OpenTelemetry                                                                                         |
+| `TranscriptionAdapter` | Audio → text                                       | Gemini live                                                                                                              |
+| `RemindersAdapter`     | Where reminders land                               | iCloud CalDAV, local `.ics`, Postgres                                                                                    |
+| `SourceAdapter`        | Inspects and **reads** one bound source            | Local files (CLI/desktop), indexed documents (cloud). No first-party impl writes — `write()` is unimplemented everywhere |
+| `KnowledgeAdapter`     | Retrieves cited source evidence                    | Interface only — no first-party implementation ships yet                                                                 |
+| `BrainAdapter`         | Stores curated decisions and durable understanding | Klypix `.klypix` file reader (CLI/desktop)                                                                               |
+| `ReceiptAdapter`       | Persists structured proof of each run              | Postgres (cloud), on-disk (CLI), in-memory (desktop)                                                                     |
 
 The engine runs against any combination. What differs per host is which tool
 executors and source adapters that host registers — not the engine itself.

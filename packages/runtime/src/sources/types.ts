@@ -1,3 +1,5 @@
+import type { RunActionReceipt } from "../actions/types";
+
 /**
  * Portable source contracts.
  *
@@ -80,11 +82,7 @@ export type SourceTruthContract = {
   authority: "authoritative" | "supporting" | "reference" | "example";
   /** Higher values win when `conflictPolicy` uses authority. Range: 0..100. */
   priority?: number;
-  conflictPolicy:
-    | "fail"
-    | "ask"
-    | "prefer-authority"
-    | "prefer-newer";
+  conflictPolicy: "fail" | "ask" | "prefer-authority" | "prefer-newer";
   citations: "required" | "preferred" | "none";
 };
 
@@ -375,6 +373,8 @@ export type RunReceipt = {
   writes: ReceiptSourceWrite[];
   approvals: ReceiptApproval[];
   evaluations: ReceiptEvaluation[];
+  /** Real-world side effects, with proof separate from executor completion. */
+  actions?: RunActionReceipt[];
   /**
    * Structured citations resolved from the output's `[cite:<chunkId>]`
    * markers against this run's admitted evidence. Present on succeeded

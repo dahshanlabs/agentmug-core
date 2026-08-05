@@ -81,7 +81,8 @@ function requiredProviderEnvVar(model: string): string | null {
   if (p === "openai") return NATIVE_PROVIDERS.openai.envKey;
   if (p === "gemini") return NATIVE_PROVIDERS.gemini.envKey;
   if (p && p in OPENAI_COMPAT_PROVIDERS) {
-    return OPENAI_COMPAT_PROVIDERS[p as keyof typeof OPENAI_COMPAT_PROVIDERS].envKey;
+    return OPENAI_COMPAT_PROVIDERS[p as keyof typeof OPENAI_COMPAT_PROVIDERS]
+      .envKey;
   }
   return null;
 }
@@ -102,11 +103,15 @@ import {
   sourceReadinessErrorLines,
   unbindCliSource,
 } from "./source-host.js";
-import {
-  CliReceiptStore,
-  CliSourceBindingStore,
-} from "./source-state.js";
+import { CliReceiptStore, CliSourceBindingStore } from "./source-state.js";
 import { terminalSafeOneLine } from "./terminal-safety.js";
+import {
+  evaluationCounts,
+  formatCloudReliabilityRun,
+  formatCloudReliabilitySummary,
+  type CloudReliabilityRun,
+  type CloudReliabilitySummary,
+} from "./reliability.js";
 
 const HELP = `agentmug — run AgentMug agents from the terminal
 
@@ -140,6 +145,8 @@ Cloud (agent-controllable surface — set AGENTMUG_API_KEY):
   agentmug edit <agent-id> [--system-prompt "..."]       Improve an agent's blueprint
                 [--add-tool X] [--remove-tool Y] [--model M]
   agentmug key new --agent <agent-id>                    Mint a per-agent API key
+  agentmug reliability status <agent-id>                 Inspect secret-free hosted scores
+  agentmug reliability check <agent-id>                  Run the hosted safe-simulation suite
 
 Options (run):
   --anthropic-key <key>   Override env ANTHROPIC_API_KEY
@@ -165,6 +172,8 @@ Environment:
   AGENTMUG_HOST           For cloud subcommands (default https://agentmug.com)
   AGENTMUG_API_KEY        For cloud subcommands (mint at agentmug.com → Settings → API)
   AGENTMUG_STATE_DIR      Override private local bindings/receipts directory
+  Key scope: account commands require am_user_; invoke and reliability also
+             accept an am_agent_ key scoped to that hosted worker.
 
 Connector credentials (optional — only when the agent uses these tools):
   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER   twilio.send_sms / send_whatsapp
@@ -192,7 +201,8 @@ type CliArgs = {
     | "edit"
     | "key"
     | "sources"
-    | "receipts";
+    | "receipts"
+    | "reliability";
   /** Subcommand for noun-style commands like `key new` and `sources bind`. */
   subcommand?: string;
   /** Positional arguments after command/subcommand, in original order. */
@@ -238,6 +248,7 @@ function parseArgs(argv: string[]): CliArgs {
     "key",
     "sources",
     "receipts",
+    "reliability",
     "help",
   ];
   if (!knownCommands.includes(cmd as CliArgs["command"])) {
@@ -248,7 +259,12 @@ function parseArgs(argv: string[]): CliArgs {
   let positionalStart = 1;
   // Compound commands like `key new` consume an extra positional
   // before flag parsing begins.
-  if (cmd === "key" || cmd === "sources" || cmd === "receipts") {
+  if (
+    cmd === "key" ||
+    cmd === "sources" ||
+    cmd === "receipts" ||
+    cmd === "reliability"
+  ) {
     args.subcommand = argv[1];
     positionalStart = 2;
   }
@@ -312,6 +328,16 @@ function parseArgs(argv: string[]): CliArgs {
       throw new Error("Missing path to .agent file");
     }
   }
+  if (cmd === "reliability") {
+    if (!["status", "check"].includes(args.subcommand ?? "")) {
+      throw new Error(
+        "Use one of: agentmug reliability status|check <agent-id>",
+      );
+    }
+    if (!args.positional) {
+      throw new Error("Missing hosted agent id");
+    }
+  }
   return args;
 }
 
@@ -352,7 +378,10 @@ async function loadAgentFile(path: string): Promise<AgentFileV1> {
 
 /** In-memory persistence backed by the loaded .agent file. */
 class FileAgentPersistence implements PersistenceAdapter {
-  private runs = new Map<string, NewRun & Partial<RunCompletion & RunFailure>>();
+  private runs = new Map<
+    string,
+    NewRun & Partial<RunCompletion & RunFailure>
+  >();
   constructor(private agentFile: AgentFileV1) {}
   async getAgent(id: string): Promise<AgentRecord | null> {
     if (id !== this.agentFile.id) return null;
@@ -368,6 +397,7 @@ class FileAgentPersistence implements PersistenceAdapter {
       systemPrompt: this.agentFile.blueprint.systemPrompt,
       primaryModel: this.agentFile.blueprint.primaryModel,
       maxTokens: this.agentFile.blueprint.maxTokens ?? null,
+      evaluation: this.agentFile.evaluation,
       // Carry the side-effect gate so the injection backstop holds off-cloud.
       guardrails: this.agentFile.blueprint.guardrails,
     };
@@ -414,7 +444,10 @@ class IcsFileRemindersAdapter implements RemindersAdapter {
     }
 
     let next: string;
-    if (existing.includes("BEGIN:VCALENDAR") && existing.includes("END:VCALENDAR")) {
+    if (
+      existing.includes("BEGIN:VCALENDAR") &&
+      existing.includes("END:VCALENDAR")
+    ) {
       next = existing.replace(
         /END:VCALENDAR\s*$/i,
         `${vevent}\r\nEND:VCALENDAR\r\n`,
@@ -442,7 +475,11 @@ class CliCreateReminderExecutor implements ToolExecutor {
   constructor(private sink: RemindersAdapter) {}
   async execute(input: unknown, ctx: ToolExecutionContext): Promise<unknown> {
     const parsed = (input ?? {}) as Partial<CreateReminderInput>;
-    if (!parsed.title || typeof parsed.title !== "string" || !parsed.title.trim()) {
+    if (
+      !parsed.title ||
+      typeof parsed.title !== "string" ||
+      !parsed.title.trim()
+    ) {
       throw new Error("create_reminder requires a non-empty title");
     }
     const result = await this.sink.createReminder(
@@ -454,7 +491,11 @@ class CliCreateReminderExecutor implements ToolExecutor {
       },
       ctx,
     );
-    return { id: result.id, status: "created" as const, title: parsed.title.trim() };
+    return {
+      id: result.id,
+      status: "created" as const,
+      title: parsed.title.trim(),
+    };
   }
 }
 
@@ -510,9 +551,7 @@ async function sourceCommand(args: CliArgs): Promise<number> {
 
   if (args.subcommand === "unbind") {
     if (!sourceId) {
-      process.stderr.write(
-        "agentmug sources unbind <agent> <source-id>\n",
-      );
+      process.stderr.write("agentmug sources unbind <agent> <source-id>\n");
       return 2;
     }
     const removed = await unbindCliSource(
@@ -592,22 +631,25 @@ async function receiptsCommand(args: CliArgs): Promise<number> {
       completedAt: receipt.completedAt,
       sourceReads: receipt.reads.length,
       sourceWrites: receipt.writes.length,
+      evaluations: evaluationCounts(receipt.evaluations),
       agentVersion: receipt.agentVersion,
-      sourceAuthorityFingerprint:
-        receipt.metadata?.sourceAuthorityFingerprint,
+      sourceAuthorityFingerprint: receipt.metadata?.sourceAuthorityFingerprint,
       receiptPersistence: receipt.metadata?.receiptPersistence,
     }));
     if (args.json) {
-      process.stdout.write(`${JSON.stringify({ receipts: summaries }, null, 2)}\n`);
+      process.stdout.write(
+        `${JSON.stringify({ receipts: summaries }, null, 2)}\n`,
+      );
     } else if (summaries.length === 0) {
-      process.stdout.write("No private grounding receipts are saved for this agent.\n");
+      process.stdout.write("No local run receipts are saved for this agent.\n");
     } else {
       for (const receipt of summaries) {
         process.stdout.write(
           `${terminalSafeOneLine(receipt.runId)}  ` +
             `${terminalSafeOneLine(receipt.status, 50)}  ` +
             `${terminalSafeOneLine(receipt.completedAt ?? receipt.startedAt, 100)}  ` +
-            `${receipt.sourceReads} read(s), ${receipt.sourceWrites} write(s)\n`,
+            `${receipt.sourceReads} read(s), ${receipt.sourceWrites} write(s), ` +
+            `${receipt.evaluations.passed} check(s) passed, ${receipt.evaluations.failed} failed, ${receipt.evaluations.skipped} skipped\n`,
         );
       }
     }
@@ -657,7 +699,16 @@ async function receiptsCommand(args: CliArgs): Promise<number> {
         `  agent version: ${terminalSafeOneLine(receipt.agentVersion ?? "unknown", 100)}\n` +
         `  source reads: ${receipt.reads.length}\n` +
         `  source writes: ${receipt.writes.length}\n` +
-        `  approvals: ${receipt.approvals.length}\n`,
+        `  approvals: ${receipt.approvals.length}\n` +
+        `  portable checks: ${receipt.evaluations.length}\n` +
+        receipt.evaluations
+          .map(
+            (evaluation) =>
+              `    ${terminalSafeOneLine(evaluation.status, 20)} ${terminalSafeOneLine(evaluation.checkId, 200)}` +
+              `${typeof evaluation.score === "number" ? ` (${Math.round(evaluation.score * 100)}%)` : ""}` +
+              `${evaluation.message ? `: ${terminalSafeOneLine(evaluation.message, 500)}` : ""}\n`,
+          )
+          .join(""),
     );
   }
   return 0;
@@ -673,9 +724,25 @@ async function checkAgent(args: CliArgs): Promise<number> {
   out(file.description ? `  ${file.description}\n` : "");
 
   // 1. Model key — the one universal requirement.
-  const hasAnthropicKey = Boolean(args.anthropicKey ?? process.env.ANTHROPIC_API_KEY);
-  out(hasAnthropicKey ? "  ✓ ANTHROPIC_API_KEY is set" : "  ✗ ANTHROPIC_API_KEY is not set");
-  if (!hasAnthropicKey) missing++;
+  const model = file.blueprint.primaryModel || "claude-sonnet-4-6";
+  const modelEnvVar = requiredProviderEnvVar(model);
+  if (modelEnvVar) {
+    const configured = Boolean(
+      modelEnvVar === "ANTHROPIC_API_KEY"
+        ? (args.anthropicKey ?? process.env[modelEnvVar])
+        : process.env[modelEnvVar],
+    );
+    out(
+      configured
+        ? `  configured: ${modelEnvVar} is set for ${model}`
+        : `  missing: ${modelEnvVar} is not set for ${model}`,
+    );
+    if (!configured) missing++;
+  } else {
+    out(
+      `  model: ${model}; the runtime will verify its custom endpoint or router configuration at run time`,
+    );
+  }
 
   // 2. Connector credentials — the same env conventions `run` uses. Known
   //    key-providers check their documented vars; OAuth providers check the
@@ -695,7 +762,9 @@ async function checkAgent(args: CliArgs): Promise<number> {
       out(`  ✓ ${req.label} connected (for ${req.forTools.join(", ")})`);
     } else {
       missing++;
-      out(`  ✗ ${req.label} — set ${unset.join(", ")} (needed by ${req.forTools.join(", ")})`);
+      out(
+        `  ✗ ${req.label} — set ${unset.join(", ")} (needed by ${req.forTools.join(", ")})`,
+      );
     }
   }
 
@@ -709,10 +778,29 @@ async function checkAgent(args: CliArgs): Promise<number> {
     missing += countBlockingSourceItems(file, prepared);
   }
 
+  if ((file.evaluation?.checks.length ?? 0) > 0) {
+    const contract = file.evaluation!;
+    out("");
+    out(
+      `  Portable checks: ${contract.checks.length}; failure policy ${contract.failurePolicy}` +
+        `${contract.minimumScore === undefined ? "" : `; minimum score ${Math.round(contract.minimumScore * 100)}%`}`,
+    );
+    for (const check of contract.checks) {
+      out(
+        `    ${check.severity} ${check.name} (${check.phase}, ${check.type})`,
+      );
+    }
+    out(
+      "  These checks run in this local host and are recorded in its run receipt.",
+    );
+  }
+
   // 4. Triggers — what fires here vs what honestly can't.
   const schedules = getScheduleTriggers(file);
   for (const s of schedules) {
-    out(`  • schedule "${s.label || s.cron}" (${s.cron}${s.timezone ? ` ${s.timezone}` : ""}) — the CLI doesn't register cron; add a crontab line calling \`agentmug run\` yourself.`);
+    out(
+      `  • schedule "${s.label || s.cron}" (${s.cron}${s.timezone ? ` ${s.timezone}` : ""}) — the CLI doesn't register cron; add a crontab line calling \`agentmug run\` yourself.`,
+    );
   }
   for (const u of unsupportedTriggers(file, CLI_CAPABILITIES)) {
     out(`  ⚠ ${(u.trigger as { type: string }).type} trigger: ${u.reason}`);
@@ -722,15 +810,21 @@ async function checkAgent(args: CliArgs): Promise<number> {
   const c = file.connectivity;
   if (c?.delivers?.length || c?.reads?.length) {
     out("");
-    for (const d of c.delivers ?? []) out(`  • delivers ${d.channel} to the ${d.to} via ${d.via}`);
-    for (const r of c.reads ?? []) out(`  • reads ${r.resource} (${r.provider})`);
-    out("  ⚠ credentials-present is NOT delivery-proven — only a real round-trip proves the path. Run it on agentmug.com and tap Verify for an earned green.");
+    for (const d of c.delivers ?? [])
+      out(`  • delivers ${d.channel} to the ${d.to} via ${d.via}`);
+    for (const r of c.reads ?? [])
+      out(`  • reads ${r.resource} (${r.provider})`);
+    out(
+      "  ⚠ credentials-present is NOT delivery-proven — only a real round-trip proves the path. Run it on agentmug.com and tap Verify for an earned green.",
+    );
   }
 
   out("");
-  out(missing === 0
-    ? "Ready to `agentmug run` — everything this machine needs is set."
-    : `${missing} item(s) missing — set the variables above, then re-run \`agentmug check\`.`);
+  out(
+    missing === 0
+      ? "Ready to `agentmug run` — everything this machine needs is set."
+      : `${missing} item(s) missing — set the variables above, then re-run \`agentmug check\`.`,
+  );
   out("");
   return missing === 0 ? 0 : 1;
 }
@@ -743,6 +837,7 @@ async function runCli(args: CliArgs): Promise<number> {
 
   if (args.command === "sources") return sourceCommand(args);
   if (args.command === "receipts") return receiptsCommand(args);
+  if (args.command === "reliability") return cloudReliability(args);
 
   // Phase C: setup check — read-only, dispatched BEFORE the Anthropic-key
   // gate (checking what's missing must not itself require a key).
@@ -775,7 +870,9 @@ async function runCli(args: CliArgs): Promise<number> {
   }
   const userInput = await resolveInput(args);
   const hasSources = (agentFile.sources?.length ?? 0) > 0;
-  const receiptStore = hasSources
+  const hasPortableReceipt =
+    hasSources || (agentFile.evaluation?.checks.length ?? 0) > 0;
+  const receiptStore = hasPortableReceipt
     ? new CliReceiptStore(args.agentPath!, agentFile.id, {
         agent: agentFile,
         bindings: sourceRuntime.bindings,
@@ -797,7 +894,9 @@ async function runCli(args: CliArgs): Promise<number> {
   if (neededVar && !env[neededVar]) {
     process.stderr.write(
       `Agent uses model '${terminalSafeOneLine(model)}' — set ${neededVar} in the environment` +
-        (neededVar === "ANTHROPIC_API_KEY" ? " (or pass --anthropic-key)" : "") +
+        (neededVar === "ANTHROPIC_API_KEY"
+          ? " (or pass --anthropic-key)"
+          : "") +
         " and re-run.\n",
     );
     return 2;
@@ -823,11 +922,28 @@ async function runCli(args: CliArgs): Promise<number> {
   // is the tri-runtime parity: `agentmug run` now actually SENDS, not just
   // describes.
   const t = agentFile.blueprint.tools;
-  if (t.includes("twilio.send_sms")) registry.register(twilioSendSmsDefinition, new CliTwilioSendSmsExecutor());
-  if (t.includes("twilio.send_whatsapp")) registry.register(twilioSendWhatsappDefinition, new CliTwilioSendWhatsappExecutor());
-  if (t.includes("telegram.send_message")) registry.register(telegramSendMessageDefinition, new CliTelegramSendMessageExecutor());
-  if (t.includes("discord.send_message")) registry.register(discordSendMessageDefinition, new CliDiscordSendMessageExecutor());
-  if (t.includes("slack.send_message")) registry.register(slackSendMessageDefinition, new CliSlackSendMessageExecutor());
+  if (t.includes("twilio.send_sms"))
+    registry.register(twilioSendSmsDefinition, new CliTwilioSendSmsExecutor());
+  if (t.includes("twilio.send_whatsapp"))
+    registry.register(
+      twilioSendWhatsappDefinition,
+      new CliTwilioSendWhatsappExecutor(),
+    );
+  if (t.includes("telegram.send_message"))
+    registry.register(
+      telegramSendMessageDefinition,
+      new CliTelegramSendMessageExecutor(),
+    );
+  if (t.includes("discord.send_message"))
+    registry.register(
+      discordSendMessageDefinition,
+      new CliDiscordSendMessageExecutor(),
+    );
+  if (t.includes("slack.send_message"))
+    registry.register(
+      slackSendMessageDefinition,
+      new CliSlackSendMessageExecutor(),
+    );
 
   // First-party core tools (fetch_url, web.fetch_json, query_csv) — registered
   // straight from the runtime for any the agent declares, so a portable .agent
@@ -844,10 +960,23 @@ async function runCli(args: CliArgs): Promise<number> {
   // the same LLM judge before keeping. Registered only for declared tools.
   const agentStore = new FileAgentFileStore(args.agentPath!);
   const verifySkill = createLlmSkillVerifier(llm);
-  if (t.includes("save_skill")) registry.register(saveSkillDefinition, new SaveSkillExecutor(agentStore, verifySkill));
-  if (t.includes("use_skill")) registry.register(useSkillDefinition, new UseSkillExecutor(agentStore));
-  if (t.includes("brain_remember")) registry.register(brainRememberDefinition, new BrainRememberExecutor(agentStore));
-  if (t.includes("brain_lookup")) registry.register(brainLookupDefinition, new BrainLookupExecutor(agentStore));
+  if (t.includes("save_skill"))
+    registry.register(
+      saveSkillDefinition,
+      new SaveSkillExecutor(agentStore, verifySkill),
+    );
+  if (t.includes("use_skill"))
+    registry.register(useSkillDefinition, new UseSkillExecutor(agentStore));
+  if (t.includes("brain_remember"))
+    registry.register(
+      brainRememberDefinition,
+      new BrainRememberExecutor(agentStore),
+    );
+  if (t.includes("brain_lookup"))
+    registry.register(
+      brainLookupDefinition,
+      new BrainLookupExecutor(agentStore),
+    );
 
   // Portable Manager — list_agents / create_agent / update_agent / invoke_agent
   // over the FOLDER of .agent files beside this one. A Conductor can discover,
@@ -863,11 +992,31 @@ async function runCli(args: CliArgs): Promise<number> {
       const subRegistry = new InMemoryToolRegistry();
       const subTools = normalizeTools(file).map((x) => x.name);
       registerCoreToolsFor(subRegistry, subTools);
-      if (subTools.includes("twilio.send_sms")) subRegistry.register(twilioSendSmsDefinition, new CliTwilioSendSmsExecutor());
-      if (subTools.includes("twilio.send_whatsapp")) subRegistry.register(twilioSendWhatsappDefinition, new CliTwilioSendWhatsappExecutor());
-      if (subTools.includes("telegram.send_message")) subRegistry.register(telegramSendMessageDefinition, new CliTelegramSendMessageExecutor());
-      if (subTools.includes("discord.send_message")) subRegistry.register(discordSendMessageDefinition, new CliDiscordSendMessageExecutor());
-      if (subTools.includes("slack.send_message")) subRegistry.register(slackSendMessageDefinition, new CliSlackSendMessageExecutor());
+      if (subTools.includes("twilio.send_sms"))
+        subRegistry.register(
+          twilioSendSmsDefinition,
+          new CliTwilioSendSmsExecutor(),
+        );
+      if (subTools.includes("twilio.send_whatsapp"))
+        subRegistry.register(
+          twilioSendWhatsappDefinition,
+          new CliTwilioSendWhatsappExecutor(),
+        );
+      if (subTools.includes("telegram.send_message"))
+        subRegistry.register(
+          telegramSendMessageDefinition,
+          new CliTelegramSendMessageExecutor(),
+        );
+      if (subTools.includes("discord.send_message"))
+        subRegistry.register(
+          discordSendMessageDefinition,
+          new CliDiscordSendMessageExecutor(),
+        );
+      if (subTools.includes("slack.send_message"))
+        subRegistry.register(
+          slackSendMessageDefinition,
+          new CliSlackSendMessageExecutor(),
+        );
       // A dispatched worker uses — and writes back to — its OWN brain + skills,
       // read from its own .agent file, exactly like a top-level run. Only a real
       // file path enables that; an in-memory locator stays brain-blind so we never
@@ -890,10 +1039,26 @@ async function runCli(args: CliArgs): Promise<number> {
       if (workerPath) {
         const workerStore = new FileAgentFileStore(workerPath);
         const verifyWorkerSkill = createLlmSkillVerifier(llm);
-        if (subTools.includes("save_skill")) subRegistry.register(saveSkillDefinition, new SaveSkillExecutor(workerStore, verifyWorkerSkill));
-        if (subTools.includes("use_skill")) subRegistry.register(useSkillDefinition, new UseSkillExecutor(workerStore));
-        if (subTools.includes("brain_remember")) subRegistry.register(brainRememberDefinition, new BrainRememberExecutor(workerStore));
-        if (subTools.includes("brain_lookup")) subRegistry.register(brainLookupDefinition, new BrainLookupExecutor(workerStore));
+        if (subTools.includes("save_skill"))
+          subRegistry.register(
+            saveSkillDefinition,
+            new SaveSkillExecutor(workerStore, verifyWorkerSkill),
+          );
+        if (subTools.includes("use_skill"))
+          subRegistry.register(
+            useSkillDefinition,
+            new UseSkillExecutor(workerStore),
+          );
+        if (subTools.includes("brain_remember"))
+          subRegistry.register(
+            brainRememberDefinition,
+            new BrainRememberExecutor(workerStore),
+          );
+        if (subTools.includes("brain_lookup"))
+          subRegistry.register(
+            brainLookupDefinition,
+            new BrainLookupExecutor(workerStore),
+          );
       }
       const sub = await runAgent({
         agentId: file.id,
@@ -904,7 +1069,8 @@ async function runCli(args: CliArgs): Promise<number> {
           tracing,
           llm,
           credentialResolver: new EnvCredentialResolver(),
-          ...(file.sources?.length && workerPath
+          ...((file.sources?.length || file.evaluation?.checks.length) &&
+          workerPath
             ? {
                 receipts: new CliReceiptStore(workerPath, file.id, {
                   agent: file,
@@ -919,6 +1085,7 @@ async function runCli(args: CliArgs): Promise<number> {
           bindings: workerSources?.bindings ?? [],
           adapters: file.sources?.length ? [sourceRuntime.adapter] : [],
         }),
+        evaluation: file.evaluation,
         recursionDepth: (parentContext.recursionDepth ?? 0) + 1,
         memoryContext: workerPath ? buildBrainIndex(file.brain) : "",
         // The CLI is an unattended runner (cron/CI, no human) — any approval-
@@ -966,7 +1133,7 @@ async function runCli(args: CliArgs): Promise<number> {
       // Keystone parity: portable credentialed executors resolve tokens
       // from AGENTMUG_TOKEN_<PROVIDER> env vars on the CLI.
       credentialResolver: new EnvCredentialResolver(),
-      ...(hasSources
+      ...(hasPortableReceipt
         ? {
             receipts: receiptStore,
           }
@@ -978,6 +1145,7 @@ async function runCli(args: CliArgs): Promise<number> {
       bindings: sourceRuntime.bindings,
       adapters: hasSources ? [sourceRuntime.adapter] : [],
     }),
+    evaluation: agentFile.evaluation,
     // The CLI is an unattended runner (cron / CI / `agentmug run`) — no human to
     // approve anything. Mark it so any approval-gated tool fails closed instead
     // of blocking on a prompt nobody can answer. (No shell executor is wired in
@@ -997,7 +1165,7 @@ async function runCli(args: CliArgs): Promise<number> {
   });
 
   if (
-    hasSources &&
+    hasPortableReceipt &&
     result.receipt?.metadata?.receiptPersistence === "failed" &&
     !args.json
   ) {
@@ -1017,7 +1185,7 @@ async function runCli(args: CliArgs): Promise<number> {
           totalTokens: result.totalTokens,
           costCents: result.costCents,
           latencyMs: result.latencyMs,
-          ...(hasSources ? { receipt: result.receipt } : {}),
+          ...(hasPortableReceipt ? { receipt: result.receipt } : {}),
         },
         null,
         2,
@@ -1027,13 +1195,13 @@ async function runCli(args: CliArgs): Promise<number> {
     process.stdout.write(result.output + "\n");
   } else {
     process.stdout.write("\n");
-    if (hasSources && result.receipt) {
+    if (hasPortableReceipt && result.receipt) {
       const chunks = result.receipt.reads.reduce(
         (total, read) => total + read.chunkCount,
         0,
       );
       process.stderr.write(
-        `[receipt ${result.receipt.id}: ${result.receipt.reads.length} source(s), ${chunks} evidence chunk(s), ${result.receipt.writes.length} write(s)]\n`,
+        `[receipt ${result.receipt.id}: ${result.receipt.reads.length} source(s), ${chunks} evidence chunk(s), ${result.receipt.writes.length} write(s), ${result.receipt.evaluations.length} portable check(s)]\n`,
       );
     }
   }
@@ -1084,7 +1252,10 @@ function rfcPriority(p?: "low" | "medium" | "high"): number {
   return 5;
 }
 function toIcalUtc(d: Date): string {
-  return d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  return d
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}/, "");
 }
 function toIcalDate(d: Date): string {
   return d.toISOString().slice(0, 10).replace(/-/g, "");
@@ -1115,7 +1286,7 @@ async function cloudCreate(args: CliArgs): Promise<number> {
   const prompt = typeof args.flags.prompt === "string" ? args.flags.prompt : "";
   if (!prompt) {
     process.stderr.write(
-      "agentmug create requires --prompt \"...\" describing the agent.\n",
+      'agentmug create requires --prompt "..." describing the agent.\n',
     );
     return 2;
   }
@@ -1154,7 +1325,9 @@ async function cloudList(args: CliArgs): Promise<number> {
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
   } else {
     if (result.length === 0) {
-      process.stdout.write("No agents yet. Create one:\n  agentmug create --prompt \"...\"\n");
+      process.stdout.write(
+        'No agents yet. Create one:\n  agentmug create --prompt "..."\n',
+      );
       return 0;
     }
     for (const a of result) {
@@ -1206,7 +1379,7 @@ async function cloudFork(args: CliArgs): Promise<number> {
 async function cloudEdit(args: CliArgs): Promise<number> {
   if (!args.positional) {
     process.stderr.write(
-      "agentmug edit <agent-id> [--system-prompt \"...\"] [--add-tool X] [--remove-tool Y] [--model M]\n",
+      'agentmug edit <agent-id> [--system-prompt "..."] [--add-tool X] [--remove-tool Y] [--model M]\n',
     );
     return 2;
   }
@@ -1249,13 +1422,13 @@ async function cloudEdit(args: CliArgs): Promise<number> {
 
 async function cloudInvoke(args: CliArgs): Promise<number> {
   if (!args.positional) {
-    process.stderr.write("agentmug invoke <agent-id> --input \"...\"\n");
+    process.stderr.write('agentmug invoke <agent-id> --input "..."\n');
     return 2;
   }
   const message = await resolveInput(args).catch(() => null);
   if (!message) {
     process.stderr.write(
-      "agentmug invoke requires --input \"...\" / --stdin / --input-file <path>.\n",
+      'agentmug invoke requires --input "..." / --stdin / --input-file <path>.\n',
     );
     return 2;
   }
@@ -1282,7 +1455,8 @@ async function cloudInvoke(args: CliArgs): Promise<number> {
       if (evt.type === "token" && evt.content) {
         if (!args.quiet && !args.json) process.stdout.write(evt.content);
       } else if (evt.type === "tool_start") {
-        if (!args.quiet && !args.json) process.stderr.write(`\n[${evt.name}…] `);
+        if (!args.quiet && !args.json)
+          process.stderr.write(`\n[${evt.name}…] `);
       } else if (evt.type === "tool_complete") {
         if (!args.quiet && !args.json) process.stderr.write(`✓ `);
       } else if (evt.type === "done") {
@@ -1326,12 +1500,54 @@ async function cloudInvoke(args: CliArgs): Promise<number> {
   return result.status === "completed" ? 0 : 1;
 }
 
+async function cloudReliability(args: CliArgs): Promise<number> {
+  const agentId = args.positional!;
+  const config = loadConfig();
+  const basePath = `/api/external/agents/${encodeURIComponent(agentId)}/reliability`;
+
+  if (args.subcommand === "status") {
+    const summary = await apiRequest<CloudReliabilitySummary>(
+      config,
+      "GET",
+      basePath,
+    );
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+    } else {
+      for (const line of formatCloudReliabilitySummary(summary)) {
+        process.stdout.write(`${terminalSafeOneLine(line, 1_000)}\n`);
+      }
+    }
+    return 0;
+  }
+
+  const run = await apiRequest<CloudReliabilityRun>(
+    config,
+    "POST",
+    `${basePath}/check`,
+  );
+  if (args.json) {
+    process.stdout.write(`${JSON.stringify(run, null, 2)}\n`);
+  } else {
+    process.stdout.write(
+      "Hosted reliability check completed in safe simulation. No live tools were called.\n",
+    );
+    for (const line of formatCloudReliabilityRun(run)) {
+      process.stdout.write(`  ${terminalSafeOneLine(line, 1_000)}\n`);
+    }
+    process.stdout.write(
+      "  Private cases stayed in AgentMug. This result covers the hosted worker, not a locally modified .agent file.\n",
+    );
+  }
+  return run.status === "completed" ? 0 : 1;
+}
+
 async function cloudKey(args: CliArgs): Promise<number> {
   // `agentmug key new --agent <id> [--label <text>]` mints a per-agent
   // API key. Future: `key list`, `key revoke <id>`.
   if (args.subcommand !== "new") {
     process.stderr.write(
-      "agentmug key new --agent <agent-id> [--label \"...\"]\n",
+      'agentmug key new --agent <agent-id> [--label "..."]\n',
     );
     return 2;
   }
@@ -1341,18 +1557,18 @@ async function cloudKey(args: CliArgs): Promise<number> {
     return 2;
   }
   const config = loadConfig();
-  const result = await apiRequest<{ id: string; key: string; keyPrefix: string }>(
-    config,
-    "POST",
-    `/api/agents/${encodeURIComponent(agentId)}/keys`,
-    { label: typeof args.flags.label === "string" ? args.flags.label : undefined },
-  );
+  const result = await apiRequest<{
+    id: string;
+    key: string;
+    keyPrefix: string;
+  }>(config, "POST", `/api/agents/${encodeURIComponent(agentId)}/keys`, {
+    label: typeof args.flags.label === "string" ? args.flags.label : undefined,
+  });
   if (args.json) {
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
   } else {
     process.stdout.write(
-      `${result.key}\n\n` +
-        `Save this key now — it won't be shown again.\n`,
+      `${result.key}\n\n` + `Save this key now — it won't be shown again.\n`,
     );
   }
   return 0;

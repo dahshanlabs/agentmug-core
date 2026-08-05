@@ -26,6 +26,7 @@ import type {
   LlmToolDefinition,
 } from "./llm";
 import { encodeToolName, decodeToolName } from "./tool-name-codec";
+import { normalizeExplicitToolPropertyTypes } from "./tool-schema-compat";
 
 export type OpenAiLlmClientOptions = {
   apiKey: string;
@@ -78,13 +79,20 @@ export class OpenAiLlmClient implements LlmClient {
       }
     }
 
-    const tools = params.tools?.map(toOpenAiTool);
+    const isKimiK3 = params.model.toLowerCase() === "kimi-k3";
+    const usesExplicitToolPropertyTypes = requiresExplicitToolPropertyTypes(
+      params.model,
+    );
+    const tools = params.tools?.map((tool) =>
+      toOpenAiTool(tool, usesExplicitToolPropertyTypes),
+    );
     const isReasoning =
       !this.forcePlainMaxTokens &&
       (params.model.startsWith("o1") ||
         params.model.startsWith("o3") ||
         params.model.startsWith("o4") ||
-        params.model.startsWith("gpt-5"));
+        params.model.startsWith("gpt-5") ||
+        isKimiK3);
 
     const request: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
       model: params.model,
@@ -97,6 +105,11 @@ export class OpenAiLlmClient implements LlmClient {
       ...(isReasoning
         ? { max_completion_tokens: params.maxTokens }
         : { max_tokens: params.maxTokens }),
+      // K3 defaults to max effort. High preserves frontier execution quality
+      // without letting routine tool turns spend their whole token budget on
+      // hidden reasoning. Keep this stable across the conversation so prefix
+      // caching remains valid.
+      ...(isKimiK3 ? { reasoning_effort: "high" as const } : {}),
       ...(tools && tools.length > 0 ? { tools, tool_choice: "auto" } : {}),
     };
 
@@ -111,6 +124,7 @@ export class OpenAiLlmClient implements LlmClient {
       number,
       { id?: string; name?: string; arguments?: string }
     >();
+    let reasoningAcc = "";
     let textAcc = "";
     let stopReason = "end_turn";
     let inputTokens = 0;
@@ -120,6 +134,17 @@ export class OpenAiLlmClient implements LlmClient {
       const choice = chunk.choices[0];
       if (choice) {
         const delta = choice.delta;
+        // Kimi K3 (and some other OpenAI-compatible reasoning models) stream
+        // this vendor extension. Preserve it separately from visible output:
+        // K3 requires the complete assistant message, including
+        // reasoning_content, to be replayed verbatim after tool calls.
+        const reasoningDelta = (
+          delta as typeof delta & { reasoning_content?: string | null }
+        )?.reasoning_content;
+        if (reasoningDelta) {
+          reasoningAcc += reasoningDelta;
+          yield { type: "thinking_delta", text: reasoningDelta };
+        }
         if (delta?.content) {
           textAcc += delta.content;
           yield { type: "text_delta", text: delta.content };
@@ -156,6 +181,9 @@ export class OpenAiLlmClient implements LlmClient {
     }
 
     const content: LlmContentBlock[] = [];
+    if (reasoningAcc) {
+      content.push({ type: "thinking", thinking: reasoningAcc });
+    }
     if (textAcc) {
       content.push({ type: "text", text: textAcc });
     }
@@ -184,7 +212,10 @@ export class OpenAiLlmClient implements LlmClient {
   }
 }
 
-function toOpenAiTool(tool: LlmToolDefinition): OpenAI.Chat.ChatCompletionTool {
+function toOpenAiTool(
+  tool: LlmToolDefinition,
+  usesExplicitToolPropertyTypes: boolean,
+): OpenAI.Chat.ChatCompletionTool {
   return {
     type: "function",
     function: {
@@ -192,9 +223,27 @@ function toOpenAiTool(tool: LlmToolDefinition): OpenAI.Chat.ChatCompletionTool {
       // them for the wire and decode when the model calls the tool back.
       name: encodeToolName(tool.name),
       description: tool.description,
-      parameters: tool.inputSchema as Record<string, unknown>,
+      // Moonshot and Gemini validate schema nodes more strictly than standard
+      // JSON Schema. Normalize a clone at the provider boundary so valid
+      // enum-only schemas from Nango/MCP cannot reject the entire request.
+      parameters: usesExplicitToolPropertyTypes
+        ? normalizeExplicitToolPropertyTypes(tool.inputSchema)
+        : tool.inputSchema,
     },
   };
+}
+
+function requiresExplicitToolPropertyTypes(model: string): boolean {
+  const normalized = model.toLowerCase();
+  return (
+    normalized.startsWith("kimi-") ||
+    normalized.startsWith("moonshot-") ||
+    normalized.includes("/kimi-") ||
+    normalized.includes("/moonshot") ||
+    normalized.startsWith("gemini-") ||
+    normalized.startsWith("google.") ||
+    normalized.includes("/gemini-")
+  );
 }
 
 /**
@@ -215,6 +264,7 @@ function toOpenAiMessages(
   const out: OpenAI.Chat.ChatCompletionMessageParam[] = [];
   const textParts: string[] = [];
   const imageParts: Array<{ data: string; mediaType: string }> = [];
+  const thinkingParts: string[] = [];
   const toolCalls: OpenAI.Chat.ChatCompletionMessageToolCall[] = [];
   const toolResults: { tool_call_id: string; content: string }[] = [];
   for (const block of msg.content) {
@@ -222,6 +272,8 @@ function toOpenAiMessages(
       textParts.push(block.text);
     } else if (block.type === "image") {
       imageParts.push({ data: block.data, mediaType: block.mediaType });
+    } else if (block.type === "thinking") {
+      thinkingParts.push(block.thinking);
     } else if (block.type === "tool_use") {
       toolCalls.push({
         id: block.id,
@@ -246,6 +298,12 @@ function toOpenAiMessages(
     };
     if (toolCalls.length > 0) {
       assistantMsg.tool_calls = toolCalls;
+    }
+    if (thinkingParts.length > 0) {
+      // reasoning_content is an OpenAI-compatible vendor extension not yet in
+      // the SDK's ChatCompletionAssistantMessageParam type.
+      (assistantMsg as typeof assistantMsg & { reasoning_content: string }).reasoning_content =
+        thinkingParts.join("");
     }
     out.push(assistantMsg);
   } else {

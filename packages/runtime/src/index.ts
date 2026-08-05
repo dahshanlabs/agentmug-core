@@ -6,9 +6,21 @@
 // without reaching into internal paths.
 
 export {
-  runAgent,
-  AgentNotFoundError,
-} from "./engine";
+  WORKER_ARCHITECTURE_IDS,
+  WORKER_ARCHITECTURE_CAPABILITIES,
+  SUPPORTED_WORKER_ARCHITECTURES,
+  DEFAULT_WORKER_ARCHITECTURE,
+  isKnownWorkerArchitecture,
+  isSupportedWorkerArchitecture,
+} from "./architecture-capabilities";
+export type {
+  WorkerArchitectureId,
+  WorkerArchitectureAvailability,
+  WorkerArchitectureCapability,
+  SupportedWorkerArchitectureId,
+} from "./architecture-capabilities";
+
+export { runAgent, AgentNotFoundError } from "./engine";
 export type {
   EngineEvent,
   RunAgentAdapters,
@@ -27,6 +39,25 @@ export type {
   RunPause,
   ConnectedAccount,
 } from "./adapters/persistence";
+export {
+  ACTION_PROOFS,
+  ACTION_STATUSES,
+  actionResult,
+  isActionResult,
+  proofSatisfies,
+  aggregateActionOutcome,
+  deriveRunOutcome,
+} from "./actions/types";
+export type {
+  ActionStatus,
+  ActionProof,
+  ActionVerificationMode,
+  RunOutcomeStatus,
+  ActionEffectDefinition,
+  ActionOutcome,
+  RunActionReceipt,
+  ToolExecutionEnvelope,
+} from "./actions/types";
 export { buildIdentityDirective } from "./identity-grounding";
 export { buildCapabilityDirective } from "./capability-grounding";
 export type { GroundedTool } from "./capability-grounding";
@@ -137,18 +168,17 @@ export {
   assertBoundSourcePreflight,
 } from "./sources/execution-plan";
 export type { SourceExecutionPlan } from "./sources/execution-plan";
+export {
+  evaluatePortableChecks,
+  portableEvaluationPolicyFailure,
+} from "./sources/evaluation";
+export type { PortableEvaluationContext } from "./sources/evaluation";
 
-export {
-  AnthropicLlmClient,
-} from "./adapters/llm";
+export { AnthropicLlmClient } from "./adapters/llm";
 export type { AnthropicLlmClientOptions } from "./adapters/llm";
-export {
-  OpenAiLlmClient,
-} from "./adapters/llm-openai";
+export { OpenAiLlmClient } from "./adapters/llm-openai";
 export type { OpenAiLlmClientOptions } from "./adapters/llm-openai";
-export {
-  GeminiLlmClient,
-} from "./adapters/llm-gemini";
+export { GeminiLlmClient } from "./adapters/llm-gemini";
 export type { GeminiLlmClientOptions } from "./adapters/llm-gemini";
 export {
   MultiLlmClient,
@@ -169,6 +199,7 @@ export type {
 } from "./adapters/llm-multi";
 export type {
   LlmClient,
+  LlmContentBlock,
   LlmMessage,
   LlmStreamParams,
   LlmStreamEvent,
@@ -181,9 +212,7 @@ export type {
   OAuthToolDefinition,
   McpToolDefinition,
 } from "./tools/types";
-export {
-  InMemoryToolRegistry,
-} from "./tools/registry";
+export { InMemoryToolRegistry } from "./tools/registry";
 export type {
   ToolRegistry,
   ToolExecutor,
@@ -192,122 +221,87 @@ export type {
   CredentialResolver,
   ResolvedCredential,
 } from "./tools/registry";
-export {
-  createReminderDefinition,
-} from "./tools/builtin/create-reminder";
+export { createReminderDefinition } from "./tools/builtin/create-reminder";
 export type {
   CreateReminderInput,
   CreateReminderResult,
 } from "./tools/builtin/create-reminder";
-export {
-  gmailSendDefinition,
-} from "./tools/builtin/gmail-send";
+export { gmailSendDefinition } from "./tools/builtin/gmail-send";
 export type {
   GmailSendInput,
   GmailSendResult,
 } from "./tools/builtin/gmail-send";
-export {
-  gmailCreateDraftDefinition,
-} from "./tools/builtin/gmail-create-draft";
+export { gmailCreateDraftDefinition } from "./tools/builtin/gmail-create-draft";
 export type {
   GmailCreateDraftInput,
   GmailCreateDraftResult,
 } from "./tools/builtin/gmail-create-draft";
-export {
-  gmailListMessagesDefinition,
-} from "./tools/builtin/gmail-list-messages";
+export { gmailListMessagesDefinition } from "./tools/builtin/gmail-list-messages";
 export type {
   GmailListMessagesInput,
   GmailListMessage,
   GmailListMessagesResult,
 } from "./tools/builtin/gmail-list-messages";
-export {
-  emailSendDefinition,
-} from "./tools/builtin/email-send";
+export { emailSendDefinition } from "./tools/builtin/email-send";
 export type {
   EmailSendInput,
   EmailSendResult,
 } from "./tools/builtin/email-send";
-export {
-  sheetsAppendRowDefinition,
-} from "./tools/builtin/sheets-append-row";
+export { sheetsAppendRowDefinition } from "./tools/builtin/sheets-append-row";
 export type {
   SheetsAppendRowInput,
   SheetsAppendRowResult,
 } from "./tools/builtin/sheets-append-row";
-export {
-  calendarCreateEventDefinition,
-} from "./tools/builtin/calendar-create-event";
+export { calendarCreateEventDefinition } from "./tools/builtin/calendar-create-event";
 export type {
   CalendarCreateEventInput,
   CalendarCreateEventResult,
 } from "./tools/builtin/calendar-create-event";
-export {
-  twilioSendSmsDefinition,
-} from "./tools/builtin/twilio-send-sms";
+export { twilioSendSmsDefinition } from "./tools/builtin/twilio-send-sms";
 export type {
   TwilioSendSmsInput,
   TwilioSendSmsResult,
 } from "./tools/builtin/twilio-send-sms";
-export {
-  twilioSendWhatsappDefinition,
-} from "./tools/builtin/twilio-send-whatsapp";
+export { twilioSendWhatsappDefinition } from "./tools/builtin/twilio-send-whatsapp";
 export type {
   TwilioSendWhatsappInput,
   TwilioSendWhatsappResult,
 } from "./tools/builtin/twilio-send-whatsapp";
-export {
-  telegramSendMessageDefinition,
-} from "./tools/builtin/telegram-send-message";
+export { telegramSendMessageDefinition } from "./tools/builtin/telegram-send-message";
 export type {
   TelegramSendMessageInput,
   TelegramSendMessageResult,
 } from "./tools/builtin/telegram-send-message";
-export {
-  discordSendMessageDefinition,
-} from "./tools/builtin/discord-send-message";
+export { discordSendMessageDefinition } from "./tools/builtin/discord-send-message";
 export type {
   DiscordSendMessageInput,
   DiscordSendMessageResult,
 } from "./tools/builtin/discord-send-message";
-export {
-  fetchUrlDefinition,
-} from "./tools/builtin/fetch-url";
-export type {
-  FetchUrlInput,
-  FetchUrlResult,
-} from "./tools/builtin/fetch-url";
-export {
-  queryCsvDefinition,
-} from "./tools/builtin/query-csv";
-export type {
-  QueryCsvInput,
-  QueryCsvResult,
-} from "./tools/builtin/query-csv";
-export {
-  codeExecuteDefinition,
-} from "./tools/builtin/code-execute";
+export { fetchUrlDefinition } from "./tools/builtin/fetch-url";
+export type { FetchUrlInput, FetchUrlResult } from "./tools/builtin/fetch-url";
+export { queryCsvDefinition } from "./tools/builtin/query-csv";
+export type { QueryCsvInput, QueryCsvResult } from "./tools/builtin/query-csv";
+export { codeExecuteDefinition } from "./tools/builtin/code-execute";
 export type {
   CodeExecuteInput,
   CodeExecuteResult,
 } from "./tools/builtin/code-execute";
-export {
-  invokeAgentDefinition,
-} from "./tools/builtin/invoke-agent";
+export { requestCapabilityDefinition } from "./tools/builtin/request-capability";
+export type {
+  RequestCapabilityInput,
+  RequestCapabilityResult,
+} from "./tools/builtin/request-capability";
+export { invokeAgentDefinition } from "./tools/builtin/invoke-agent";
 export type {
   InvokeAgentInput,
   InvokeAgentResult,
 } from "./tools/builtin/invoke-agent";
-export {
-  a2aInvokeDefinition,
-} from "./tools/builtin/a2a-invoke";
+export { a2aInvokeDefinition } from "./tools/builtin/a2a-invoke";
 export type {
   A2aInvokeInput,
   A2aInvokeResult,
 } from "./tools/builtin/a2a-invoke";
-export {
-  a2aDiscoverDefinition,
-} from "./tools/builtin/a2a-discover";
+export { a2aDiscoverDefinition } from "./tools/builtin/a2a-discover";
 export type {
   A2aDiscoverInput,
   A2aDiscoverResult,
@@ -331,24 +325,18 @@ export type {
   CompositionWorker,
   CompositionConflict,
 } from "./tools/side-effect-gate";
-export {
-  listAgentsDefinition,
-} from "./tools/builtin/list-agents";
+export { listAgentsDefinition } from "./tools/builtin/list-agents";
 export type {
   ListAgentsInput,
   ListAgentsResult,
   AgentSummary,
 } from "./tools/builtin/list-agents";
-export {
-  createAgentDefinition,
-} from "./tools/builtin/create-agent";
+export { createAgentDefinition } from "./tools/builtin/create-agent";
 export type {
   CreateAgentInput,
   CreateAgentResult,
 } from "./tools/builtin/create-agent";
-export {
-  updateAgentDefinition,
-} from "./tools/builtin/update-agent";
+export { updateAgentDefinition } from "./tools/builtin/update-agent";
 export type {
   UpdateAgentInput,
   UpdateAgentResult,
@@ -359,44 +347,29 @@ export {
   memoryForgetDefinition,
   memoryReflectDefinition,
 } from "./tools/builtin/memory";
-export {
-  webResearchDefinition,
-} from "./tools/builtin/web-research";
+export { webResearchDefinition } from "./tools/builtin/web-research";
 export type {
   WebResearchInput,
   WebResearchResult,
 } from "./tools/builtin/web-research";
-export {
-  webBrowseDefinition,
-} from "./tools/builtin/web-browse";
+export { webBrowseDefinition } from "./tools/builtin/web-browse";
 export type {
   WebBrowseInput,
   WebBrowseResult,
 } from "./tools/builtin/web-browse";
-export {
-  askUserDefinition,
-} from "./tools/builtin/ask-user";
-export type {
-  AskUserInput,
-  AskUserResult,
-} from "./tools/builtin/ask-user";
-export {
-  imageGenerateDefinition,
-} from "./tools/builtin/image-generate";
+export { askUserDefinition } from "./tools/builtin/ask-user";
+export type { AskUserInput, AskUserResult } from "./tools/builtin/ask-user";
+export { imageGenerateDefinition } from "./tools/builtin/image-generate";
 export type {
   ImageGenerateInput,
   ImageGenerateResult,
 } from "./tools/builtin/image-generate";
-export {
-  shellExecuteDefinition,
-} from "./tools/builtin/shell-execute";
+export { shellExecuteDefinition } from "./tools/builtin/shell-execute";
 export type {
   ShellExecuteInput,
   ShellExecuteResult,
 } from "./tools/builtin/shell-execute";
-export {
-  fetchJsonDefinition,
-} from "./tools/builtin/fetch-json";
+export { fetchJsonDefinition } from "./tools/builtin/fetch-json";
 export type {
   FetchJsonInput,
   FetchJsonResult,
@@ -415,14 +388,8 @@ export type { QuickRunOptions } from "./quickstart";
 
 // Phase 30: plugin API. Lets external npm packages ship coherent
 // tool + adapter bundles a consumer wires with one import.
-export {
-  definePlugin,
-} from "./plugins";
-export type {
-  AgentMugPlugin,
-  PluginTool,
-  PluginAdapters,
-} from "./plugins";
+export { definePlugin } from "./plugins";
+export type { AgentMugPlugin, PluginTool, PluginAdapters } from "./plugins";
 // First-party core-tools bundle — portable executors (no host infra, no
 // credentials) for fetch_url / web.fetch_json / query_csv, so the CLI,
 // desktop, and any npm consumer get working compute tools via one call
@@ -524,16 +491,12 @@ export type {
   MemoryReflectInput,
   MemoryReflectResult,
 } from "./tools/builtin/memory";
-export {
-  slackSendMessageDefinition,
-} from "./tools/builtin/slack-send-message";
+export { slackSendMessageDefinition } from "./tools/builtin/slack-send-message";
 export type {
   SlackSendMessageInput,
   SlackSendMessageResult,
 } from "./tools/builtin/slack-send-message";
-export {
-  githubCreateIssueDefinition,
-} from "./tools/builtin/github-create-issue";
+export { githubCreateIssueDefinition } from "./tools/builtin/github-create-issue";
 export type {
   GithubCreateIssueInput,
   GithubCreateIssueResult,
@@ -544,6 +507,7 @@ export type {
   TextInput,
   AudioInput,
   ImageInput,
+  MultiModalInput,
 } from "./inputs/types";
 
 export type {
@@ -567,6 +531,7 @@ export type { HostCapabilities, UnsupportedTrigger } from "./triggers/plan";
 export {
   AGENT_FILE_SCHEMA_V1,
   parseAgentFile,
+  parseAgentSkillProofAttestation,
   buildAgentFile,
   serializeAgentFile,
   suggestedFilename,
@@ -593,5 +558,7 @@ export type {
   ArtifactBindingCandidate,
   ArtifactCompatibility,
   AgentCaveat,
+  AgentSkill,
+  AgentSkillProofAttestation,
   ConnectivityContract,
 } from "./format/agent-file";

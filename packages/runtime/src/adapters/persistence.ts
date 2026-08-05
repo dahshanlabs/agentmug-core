@@ -5,6 +5,8 @@
 // implementation of this interface.
 
 import type { MissingConnection } from "../connection-grounding";
+import type { RunActionReceipt, RunOutcomeStatus } from "../actions/types";
+import type { EvaluationContract } from "../sources/types";
 
 export type AgentRecord = {
   id: string;
@@ -29,6 +31,12 @@ export type BlueprintRecord = {
    * models. Travels in the .agent file's blueprint.
    */
   extendedThinkingBudget?: number | null;
+  /**
+   * Secret-free checks that travel with the `.agent` blueprint. Hosts may
+   * keep richer private regression suites separately, but this contract must
+   * produce the same receipt outcomes wherever the blueprint runs.
+   */
+  evaluation?: EvaluationContract;
   /**
    * Per-agent guardrails (jsonb on the blueprint, travels in the .agent file).
    * `sideEffectGate` opts the agent into the same-turn injection backstop:
@@ -60,18 +68,23 @@ export type RunCompletion = {
   latencyMs: number;
   llmCalls: number;
   completedAt: Date;
+  /** Real-world outcome, independent from the engine having completed. */
+  outcomeStatus?: RunOutcomeStatus;
 };
 
 export type RunFailure = {
   id: string;
   output: string;
   completedAt: Date;
+  outcomeStatus?: RunOutcomeStatus;
 };
 
 export type RunPause = {
   id: string;
   question: string;
   hint?: string;
+  options?: string[];
+  allowOther?: boolean;
   /** Opaque JSON the api-server persists; engine re-reads it on resume. */
   state: unknown;
   pausedAt: Date;
@@ -116,6 +129,11 @@ export interface PersistenceAdapter {
   createRun(run: NewRun): Promise<void>;
   completeRun(update: RunCompletion): Promise<void>;
   failRun(update: RunFailure): Promise<void>;
+  /**
+   * Optional durable action ledger. Implementations must upsert by action id.
+   * The engine awaits the initial write before invoking an external effect.
+   */
+  saveRunAction?(action: RunActionReceipt): Promise<void>;
   /**
    * Mark the run as waiting for a user answer. Used by ask_user.
    * The state is the engine's serialized pause snapshot; the adapter
