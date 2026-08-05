@@ -1,6 +1,6 @@
 {
   "name": "@agentmug/mcp-bridge",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Expose a hosted AgentMug worker as an MCP server for Claude Code, Cursor, Cline, Continue, and compatible hosts.",
   "license": "Apache-2.0",
   "publishConfig": {

@@ -6,59 +6,14 @@
   },
   "files": [
     {
-      "path": ".changeset/capability-builder-contract.md",
-      "sha256": "f34aaa07f5a2b664e86a1cebb91d7c0bceacb82f4ff49662c4f00ec7b7ea5616",
-      "size": 220
-    },
-    {
       "path": ".changeset/config.json",
       "sha256": "a3a003d820299c3d7be2df962462c02a07eb08accffa93499b6d140648e8bb28",
       "size": 271
     },
     {
-      "path": ".changeset/cross-host-reliability.md",
-      "sha256": "6f98fe187634e668ca64923aecee206a5d3624d865e19aaebf9bb330daebf7b4",
-      "size": 414
-    },
-    {
-      "path": ".changeset/honest-action-outcomes.md",
-      "sha256": "28bf69894550678bda16f8868e774c1c0b4abf7298b6bc1ade3c10c59daa2a66",
-      "size": 174
-    },
-    {
-      "path": ".changeset/kimi-k3-support.md",
-      "sha256": "15efb1cea1702009ff0740c5558226ebb473a6b5890fcbf0a2c82c0e263856e6",
-      "size": 178
-    },
-    {
-      "path": ".changeset/kimi-tool-schema.md",
-      "sha256": "2095271f33620757e07d0287da148877d434dea7e815fa7f1ab4819c88cfca2c",
-      "size": 120
-    },
-    {
-      "path": ".changeset/portable-outcome-contract.md",
-      "sha256": "c7b2f4f4cf407f7a4d8d0234fb0fbe6c1b1c2025c942ed638db16c6b1e4513db",
-      "size": 283
-    },
-    {
-      "path": ".changeset/portable-task-proof.md",
-      "sha256": "885be592cf3887d2fdab453e8493adb6496aa408d199c0866d879ff2a1631ced",
-      "size": 174
-    },
-    {
-      "path": ".changeset/provider-contract-hardening.md",
-      "sha256": "2b05f19fdc266a0156c35da8b4def8f6d6712eddb589042656db316c9f932972",
-      "size": 144
-    },
-    {
       "path": ".changeset/README.md",
       "sha256": "924220864019f9958928f10da1c6f1b15bbf3918e8650872457389782bb51d90",
       "size": 520
-    },
-    {
-      "path": ".changeset/runtime-multimodal-conversations.md",
-      "sha256": "f4e9051d47bab57296bed4d3769b08f911cccc00292a1d50380eaefa383acc33",
-      "size": 179
     },
     {
       "path": ".editorconfig",
@@ -136,6 +91,11 @@
       "size": 2452
     },
     {
+      "path": "examples/hello-agent/CHANGELOG.md",
+      "sha256": "4485fb6ea8f148741454ee683cb83ece3089357822951ce90d8c5fdb4430184c",
+      "size": 382
+    },
+    {
       "path": "examples/hello-agent/hello.agent",
       "sha256": "ec477996d5fdbbd16e1d23cf3e897f520394479c7856b06e24167c646a738549",
       "size": 895
@@ -147,7 +107,7 @@
     },
     {
       "path": "examples/hello-agent/package.json",
-      "sha256": "b9219c7df08e636d413457128ab9230aa30e7decdab8ffa55c2af172a6fe4eb8",
+      "sha256": "8b1fd041d45ba4bc9ddb2c6b49cfb236e4d9a1f9cad4a7c7d686b57df9d868cd",
       "size": 360
     },
     {
@@ -171,13 +131,18 @@
       "size": 1613
     },
     {
+      "path": "examples/web-research/CHANGELOG.md",
+      "sha256": "eb4e783d8dd595fe7139ef1ef89e8e5920e1ce8432d9fcbe4ee69d17441c3a85",
+      "size": 389
+    },
+    {
       "path": "examples/web-research/index.ts",
       "sha256": "7abe9138961428277b3f1580c5bc2d7c412462924b585b89b92dfb2b25f67c6a",
       "size": 3730
     },
     {
       "path": "examples/web-research/package.json",
-      "sha256": "c1f1c7ed4627c0d880ee64305630f49d71185f3beee4d83eb2af316e7b286b3d",
+      "sha256": "4dbad4116a27abef4fdbca3f02adae66a5292f3f96e4c9aa2dbb31617a806256",
       "size": 367
     },
     {
@@ -316,8 +281,13 @@
       "size": 774
     },
     {
+      "path": "packages/cli/CHANGELOG.md",
+      "sha256": "a7e490e3af8ef6cc3daeb0634fd89805f7e28460311d402676db033dd1123b55",
+      "size": 728
+    },
+    {
       "path": "packages/cli/package.json",
-      "sha256": "261fd78daa2d2ad705d8f3477c44788cbc5e33af85aa92025f4558f72c3445d2",
+      "sha256": "8f08d1c24313525b1bcd7481bc4ee1c38d7076e866680d2b49b1a376eb1e54fb",
       "size": 1496
     },
     {
@@ -431,8 +401,13 @@
       "size": 1097
     },
     {
+      "path": "packages/mcp-bridge/CHANGELOG.md",
+      "sha256": "34f959c12c85f8b30cca0d5c4ce337654dfbd86635e090256966c55c9154ab2c",
+      "size": 389
+    },
+    {
       "path": "packages/mcp-bridge/package.json",
-      "sha256": "5e493b6ce1d06796a4f5b179dae09ada11f26cf3a046f8f16c4ae7b42a09ecee",
+      "sha256": "f8d4af31feb5f3792cbb935079e30def727d3877d4db92aef03a665c15b42451",
       "size": 1406
     },
     {
@@ -461,8 +436,13 @@
       "size": 1014
     },
     {
+      "path": "packages/otel/CHANGELOG.md",
+      "sha256": "67ce00c43f9b8e9594c801508bf6c167b32ee4cb64ee1d3e26de56cf149b9345",
+      "size": 374
+    },
+    {
       "path": "packages/otel/package.json",
-      "sha256": "b418c67933e8393fd2c6dcb1c07d97e52feccf321ef66b40f1d08ec2019b097f",
+      "sha256": "c8174f64e7e444eaa84d5bff0914c06bac4566b85166f7708727f477fe14aa4c",
       "size": 1582
     },
     {
@@ -491,8 +471,13 @@
       "size": 1383
     },
     {
+      "path": "packages/runtime/CHANGELOG.md",
+      "sha256": "4d38b8d497b5dbd2b7b93ce255862265ce04fc29bac7922e836cbecb87ba4fda",
+      "size": 1681
+    },
+    {
       "path": "packages/runtime/package.json",
-      "sha256": "c3dfc2586c2dafe90241ce9746d792fa72893df37707c90e83bc667040d90de8",
+      "sha256": "e0f84412db3171babd7d5e707aa6a7f50ce6559aec47fb2bbcdd7ecc842b6c3c",
       "size": 2229
     },
     {
