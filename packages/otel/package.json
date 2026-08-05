@@ -1,6 +1,6 @@
 {
   "name": "@agentmug/otel",
-  "version": "14.0.0",
+  "version": "15.0.0",
   "description": "OpenTelemetry-compatible tracing for AgentMug worker execution. Emits LLM-call and transcription spans/events into your existing OTel SDK pipeline (Honeycomb, Datadog, Jaeger, Tempo, Sentry).",
   "license": "Apache-2.0",
   "publishConfig": {
@@ -28,7 +28,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@agentmug/runtime": "^0.15.0",
+    "@agentmug/runtime": "^0.16.0",
     "@opentelemetry/api": "^1.0.0"
   },
   "devDependencies": {
