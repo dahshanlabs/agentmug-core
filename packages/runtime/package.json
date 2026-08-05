@@ -36,8 +36,8 @@
     "test:evaluations": "node scripts/test-portable-evaluation.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
-    "@google/genai": "^2.0.0",
+    "@anthropic-ai/sdk": "^0.115.0",
+    "@google/genai": "^2.15.0",
     "openai": "^6.7.0"
   },
   "devDependencies": {
