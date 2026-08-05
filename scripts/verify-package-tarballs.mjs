@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 
 const privateLayout = [
@@ -27,6 +27,12 @@ const requiredTarballFiles = new Map([
 ]);
 
 const repositoryRoot = process.cwd();
+const publishDependencySections = [
+  "dependencies",
+  "optionalDependencies",
+  "peerDependencies",
+];
+const localDependencyProtocol = /^(?:catalog|file|link|portal|workspace):/i;
 const npmEnvironment = { ...process.env };
 for (const key of Object.keys(npmEnvironment)) {
   if (
@@ -84,6 +90,19 @@ for (const [expectedName, relativeDirectory] of layout) {
       `${expectedName}: missing ${relativeDirectory}/package.json`,
     );
     continue;
+  }
+
+  const manifest = JSON.parse(
+    await readFile(path.join(packageDirectory, "package.json"), "utf8"),
+  );
+  for (const section of publishDependencySections) {
+    for (const [dependency, range] of Object.entries(manifest[section] || {})) {
+      if (localDependencyProtocol.test(String(range))) {
+        violations.push(
+          `${expectedName}: published ${section}.${dependency} uses local-only range ${range}`,
+        );
+      }
+    }
   }
 
   let report;
