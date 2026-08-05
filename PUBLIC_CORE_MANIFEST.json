@@ -11,11 +11,6 @@
       "size": 271
     },
     {
-      "path": ".changeset/installable-cli-package.md",
-      "sha256": "42f42447a670599ce8098e86977e8603be3051188ed7df9826e4dfd9921cbcf7",
-      "size": 258
-    },
-    {
       "path": ".changeset/README.md",
       "sha256": "924220864019f9958928f10da1c6f1b15bbf3918e8650872457389782bb51d90",
       "size": 520
@@ -287,12 +282,12 @@
     },
     {
       "path": "packages/cli/CHANGELOG.md",
-      "sha256": "a7e490e3af8ef6cc3daeb0634fd89805f7e28460311d402676db033dd1123b55",
-      "size": 728
+      "sha256": "73aa90e3cf4f2f02415b9a366c94e637adca8f47b28c19b65791101f57d842cc",
+      "size": 995
     },
     {
       "path": "packages/cli/package.json",
-      "sha256": "b6605d86d9740be868295513b4cbcd2286d1741324edd839c6be585805251887",
+      "sha256": "c6c1a6ec41bfa1381bfa0fe270194c5c87f05b99f1a46047bc1a616c7e446e73",
       "size": 1492
     },
     {
