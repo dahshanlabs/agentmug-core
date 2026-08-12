@@ -913,34 +913,34 @@ jobs:
           )
 
       - name: Attest exact npm tarball provenance
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-checksums: release/SHA256SUMS
 
       - name: Attest runtime SBOM
         if: hashFiles('release/tarballs/runtime-*.tgz') != ''
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: release/tarballs/runtime-*.tgz
           sbom-path: release/sbom/runtime.spdx.json
 
       - name: Attest CLI SBOM
         if: hashFiles('release/tarballs/cli-*.tgz') != ''
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: release/tarballs/cli-*.tgz
           sbom-path: release/sbom/cli.spdx.json
 
       - name: Attest MCP bridge SBOM
         if: hashFiles('release/tarballs/mcp-bridge-*.tgz') != ''
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: release/tarballs/mcp-bridge-*.tgz
           sbom-path: release/sbom/mcp-bridge.spdx.json
 
       - name: Attest OpenTelemetry adapter SBOM
         if: hashFiles('release/tarballs/otel-*.tgz') != ''
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: release/tarballs/otel-*.tgz
           sbom-path: release/sbom/otel.spdx.json
