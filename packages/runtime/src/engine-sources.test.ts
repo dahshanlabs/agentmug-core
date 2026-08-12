@@ -49,6 +49,28 @@ class CapturingLlm implements LlmClient {
   }
 }
 
+test("a host-assigned durable run id is preserved end to end", async () => {
+  const file = agentFile();
+  const llm = new CapturingLlm("Durable result");
+  const { persistence, tracing } = createInMemoryAdapters(file);
+  const events: EngineEvent[] = [];
+  const result = await runAgent({
+    runId: "run_durable_test_001",
+    agentId: file.id,
+    userId: "test-user",
+    userInput: "Keep running after I close the tab.",
+    adapters: { persistence, tracing, llm },
+    sources: noSourcePlan(),
+    onEvent: (event) => events.push(event),
+  });
+
+  assert.equal(result.runId, "run_durable_test_001");
+  assert.equal(
+    events.find((event) => event.type === "started")?.runId,
+    "run_durable_test_001",
+  );
+});
+
 class SideEffectRequestLlm implements LlmClient {
   readonly calls: LlmStreamParams[] = [];
 

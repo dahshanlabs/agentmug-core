@@ -9,7 +9,10 @@
 // by cloud, desktop, and CLI.
 
 import type { ToolExecutor, ToolExecutionContext } from "../registry";
-import type { ToolReference, WebhookToolReference } from "../../format/agent-file";
+import type {
+  ToolReference,
+  WebhookToolReference,
+} from "../../format/agent-file";
 import type { WebhookToolDefinition } from "../types";
 import { isPrivateHost, readEnv } from "./net-guard";
 
@@ -17,23 +20,40 @@ const RESPONSE_CAP_BYTES = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 export class WebhookExecutor implements ToolExecutor {
-  constructor(private readonly def: { url: string; method?: string }) {}
+  constructor(
+    private readonly def: {
+      url: string;
+      method?: string;
+      name?: string;
+      requiresUserAuth?: boolean;
+    },
+  ) {}
 
   async execute(input: unknown, ctx: ToolExecutionContext): Promise<unknown> {
     let target: URL;
     try {
       target = new URL(this.def.url);
     } catch {
-      return { status: "error", message: `Invalid webhook URL: ${this.def.url}` };
-    }
-    if (target.protocol !== "https:" && readEnv("WEBHOOK_ALLOW_HTTP") !== "true") {
       return {
         status: "error",
-        message: "Webhook URL must be HTTPS (set WEBHOOK_ALLOW_HTTP=true for local dev).",
+        message: `Invalid webhook URL: ${this.def.url}`,
+      };
+    }
+    if (
+      target.protocol !== "https:" &&
+      readEnv("WEBHOOK_ALLOW_HTTP") !== "true"
+    ) {
+      return {
+        status: "error",
+        message:
+          "Webhook URL must be HTTPS (set WEBHOOK_ALLOW_HTTP=true for local dev).",
       };
     }
     if (isPrivateHost(target.hostname)) {
-      return { status: "error", message: `Refusing to call private/loopback host '${target.hostname}'.` };
+      return {
+        status: "error",
+        message: `Refusing to call private/loopback host '${target.hostname}'.`,
+      };
     }
 
     const method = (this.def.method ?? "POST").toUpperCase();
@@ -43,11 +63,26 @@ export class WebhookExecutor implements ToolExecutor {
       Accept: "application/json, text/plain;q=0.9, */*;q=0.5",
       "User-Agent": "AgentMug-Runtime webhook",
     };
+    if (this.def.requiresUserAuth) {
+      const provider = `webhook:${this.def.name ?? "default"}`;
+      const resolved = await ctx.credentialResolver?.resolve(provider, {
+        signal: ctx.signal,
+      });
+      if (!resolved?.accessToken) {
+        throw new Error(
+          `Authenticated webhook '${this.def.name ?? "webhook"}' needs local credential '${provider}'.`,
+        );
+      }
+      headers.Authorization = `${resolved.tokenType ?? "Bearer"} ${resolved.accessToken}`;
+    }
 
     let body: string | undefined;
     if (method === "GET" || method === "DELETE") {
       for (const [k, v] of Object.entries(args)) {
-        target.searchParams.set(k, typeof v === "object" ? JSON.stringify(v) : String(v));
+        target.searchParams.set(
+          k,
+          typeof v === "object" ? JSON.stringify(v) : String(v),
+        );
       }
     } else {
       body = JSON.stringify(args);
@@ -61,7 +96,15 @@ export class WebhookExecutor implements ToolExecutor {
 
     let res: Response;
     try {
-      res = await fetch(target.toString(), { method, headers, body, redirect: "follow", signal: controller.signal });
+      res = await fetch(target.toString(), {
+        method,
+        headers,
+        body,
+        // A public URL redirecting to loopback/private space would bypass the
+        // preflight above. Refuse redirects; webhook endpoints must be final.
+        redirect: "error",
+        signal: controller.signal,
+      });
     } catch (err) {
       const message =
         err instanceof Error
@@ -98,11 +141,14 @@ export class WebhookExecutor implements ToolExecutor {
 
 /** Build a webhook ToolDefinition from a blueprint webhook ref. Input schema is
  *  permissive (the LLM sends an arbitrary JSON payload to the URL). */
-export function webhookToolDefinition(ref: WebhookToolReference): WebhookToolDefinition {
+export function webhookToolDefinition(
+  ref: WebhookToolReference,
+): WebhookToolDefinition {
   return {
     type: "webhook",
     name: ref.name,
-    description: ref.description ?? `Send a JSON payload to the ${ref.name} webhook.`,
+    description:
+      ref.description ?? `Send a JSON payload to the ${ref.name} webhook.`,
     url: ref.url,
     method: ref.method,
     inputSchema: { type: "object", properties: {}, additionalProperties: true },
@@ -118,7 +164,13 @@ export function registerWebhookTools(
   for (const ref of refs) {
     if (ref.kind === "webhook") {
       const def = webhookToolDefinition(ref);
-      registry.register(def, new WebhookExecutor(def));
+      registry.register(
+        def,
+        new WebhookExecutor({
+          ...def,
+          requiresUserAuth: ref.requiresUserAuth === true,
+        }),
+      );
     }
   }
 }

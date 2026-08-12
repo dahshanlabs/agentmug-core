@@ -51,14 +51,24 @@ export type OpenAiLlmClientOptions = {
    * rejects max_completion_tokens).
    */
   forcePlainMaxTokens?: boolean;
+  /**
+   * For user-supplied OpenAI-compatible endpoints, retry once with the other
+   * token-limit parameter only when the provider returns a 400 explicitly
+   * identifying the attempted parameter as unsupported. This accommodates
+   * both local servers (`max_tokens`) and reasoning-model gateways
+   * (`max_completion_tokens`) without retrying auth, quota, or model errors.
+   */
+  autoNegotiateMaxTokens?: boolean;
 };
 
 export class OpenAiLlmClient implements LlmClient {
   private client: OpenAI;
   private forcePlainMaxTokens: boolean;
+  private autoNegotiateMaxTokens: boolean;
 
   constructor(options: OpenAiLlmClientOptions) {
     this.forcePlainMaxTokens = options.forcePlainMaxTokens ?? false;
+    this.autoNegotiateMaxTokens = options.autoNegotiateMaxTokens ?? false;
     this.client = new OpenAI({
       apiKey: options.apiKey,
       baseURL: options.baseURL,
@@ -67,9 +77,7 @@ export class OpenAiLlmClient implements LlmClient {
     });
   }
 
-  async *streamMessage(
-    params: LlmStreamParams,
-  ): AsyncIterable<LlmStreamEvent> {
+  async *streamMessage(params: LlmStreamParams): AsyncIterable<LlmStreamEvent> {
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: "system", content: params.system },
     ];
@@ -87,38 +95,75 @@ export class OpenAiLlmClient implements LlmClient {
       toOpenAiTool(tool, usesExplicitToolPropertyTypes),
     );
     const isReasoning =
-      !this.forcePlainMaxTokens &&
-      (params.model.startsWith("o1") ||
-        params.model.startsWith("o3") ||
-        params.model.startsWith("o4") ||
-        params.model.startsWith("gpt-5") ||
-        isKimiK3);
+      !this.forcePlainMaxTokens && openAiUsesCompletionTokenLimit(params.model);
 
-    const request: OpenAI.Chat.ChatCompletionCreateParamsStreaming = {
+    const requestFor = (
+      tokenParameter: TokenLimitParameter,
+      includeUsage: boolean,
+    ): OpenAI.Chat.ChatCompletionCreateParamsStreaming => ({
       model: params.model,
       messages,
       stream: true,
-      stream_options: { include_usage: true },
-      // Reasoning models (o1/o3/o4 and the gpt-5 family) use
-      // `max_completion_tokens` and reject `max_tokens` with a 400.
-      // Regular chat models accept either.
-      ...(isReasoning
+      ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
+      ...(tokenParameter === "max_completion_tokens"
         ? { max_completion_tokens: params.maxTokens }
         : { max_tokens: params.maxTokens }),
       // K3 defaults to max effort. High preserves frontier execution quality
       // without letting routine tool turns spend their whole token budget on
       // hidden reasoning. Keep this stable across the conversation so prefix
       // caching remains valid.
-      ...(isKimiK3 ? { reasoning_effort: "high" as const } : {}),
+      ...(isReasoning && params.reasoningEffort
+        ? { reasoning_effort: params.reasoningEffort }
+        : isKimiK3
+          ? { reasoning_effort: "high" as const }
+          : {}),
       ...(tools && tools.length > 0 ? { tools, tool_choice: "auto" } : {}),
-    };
-
-    const stream = await this.client.chat.completions.create(
-      request,
-      // Forward the abort signal to the SDK fetch so an in-flight
-      // generation cancels immediately on abort.
-      params.signal ? { signal: params.signal } : undefined,
-    );
+    });
+    const requestOptions = params.signal
+      ? { signal: params.signal }
+      : undefined;
+    let tokenParameter: TokenLimitParameter = isReasoning
+      ? "max_completion_tokens"
+      : "max_tokens";
+    let includeUsage = true;
+    let tokenParameterNegotiated = false;
+    let streamOptionsNegotiated = false;
+    const createStream = (parameter: TokenLimitParameter, usage: boolean) =>
+      this.client.chat.completions.create(
+        requestFor(parameter, usage),
+        requestOptions,
+      );
+    let stream: Awaited<ReturnType<typeof createStream>>;
+    for (;;) {
+      try {
+        stream = await createStream(tokenParameter, includeUsage);
+        break;
+      } catch (error) {
+        if (
+          this.autoNegotiateMaxTokens &&
+          includeUsage &&
+          !streamOptionsNegotiated &&
+          isExplicitlyUnsupportedOpenAiParameterError(error, "stream_options")
+        ) {
+          includeUsage = false;
+          streamOptionsNegotiated = true;
+          continue;
+        }
+        if (
+          this.autoNegotiateMaxTokens &&
+          !tokenParameterNegotiated &&
+          isExplicitlyUnsupportedOpenAiParameterError(error, tokenParameter)
+        ) {
+          tokenParameter =
+            tokenParameter === "max_tokens"
+              ? "max_completion_tokens"
+              : "max_tokens";
+          tokenParameterNegotiated = true;
+          continue;
+        }
+        throw error;
+      }
+    }
 
     const toolCallsAcc = new Map<
       number,
@@ -129,6 +174,7 @@ export class OpenAiLlmClient implements LlmClient {
     let stopReason = "end_turn";
     let inputTokens = 0;
     let outputTokens = 0;
+    let providerUsageReported = false;
 
     for await (const chunk of stream) {
       const choice = chunk.choices[0];
@@ -167,17 +213,42 @@ export class OpenAiLlmClient implements LlmClient {
           stopReason = mapStopReason(choice.finish_reason);
         }
       }
-      if (chunk.usage) {
-        inputTokens = chunk.usage.prompt_tokens ?? 0;
-        outputTokens = chunk.usage.completion_tokens ?? 0;
+      if (
+        chunk.usage &&
+        Number.isSafeInteger(chunk.usage.prompt_tokens) &&
+        chunk.usage.prompt_tokens > 0 &&
+        Number.isSafeInteger(chunk.usage.completion_tokens) &&
+        chunk.usage.completion_tokens > 0
+      ) {
+        // Compatibility gateways sometimes emit a truthy, partial usage
+        // object or zero placeholders. A successful streamed completion
+        // cannot have either, so only a complete positive pair is an exact
+        // receipt. Otherwise the engine must retain its conservative floor.
+        providerUsageReported = true;
+        inputTokens = chunk.usage.prompt_tokens;
+        outputTokens = chunk.usage.completion_tokens;
       }
     }
 
+    const usage = providerUsageReported ? "exact" : "estimated";
+    if (this.autoNegotiateMaxTokens && !providerUsageReported) {
+      // Older compatible servers may stream correctly but omit usage. Retain
+      // a bounded, deliberately conservative provider estimate instead of a
+      // false zero receipt. Provider-reported usage still wins whenever sent.
+      inputTokens = Math.max(
+        1,
+        Math.ceil(
+          JSON.stringify({ system: params.system, messages, tools }).length / 3,
+        ),
+      );
+      outputTokens = Math.max(1, Math.ceil(params.maxTokens));
+    }
+
     if (inputTokens > 0) {
-      yield { type: "input_tokens", count: inputTokens };
+      yield { type: "input_tokens", count: inputTokens, usage };
     }
     if (outputTokens > 0) {
-      yield { type: "output_tokens", count: outputTokens };
+      yield { type: "output_tokens", count: outputTokens, usage };
     }
 
     const content: LlmContentBlock[] = [];
@@ -210,6 +281,56 @@ export class OpenAiLlmClient implements LlmClient {
 
     yield { type: "message_complete", stopReason, content };
   }
+}
+
+type TokenLimitParameter = "max_tokens" | "max_completion_tokens";
+
+export function openAiUsesCompletionTokenLimit(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  return (
+    normalized === "o1" ||
+    normalized === "o3" ||
+    normalized === "o4" ||
+    normalized.startsWith("o1-") ||
+    normalized.startsWith("o3-") ||
+    normalized.startsWith("o4-") ||
+    normalized.startsWith("gpt-5") ||
+    normalized === "kimi-k3"
+  );
+}
+
+export function isExplicitlyUnsupportedOpenAiParameterError(
+  error: unknown,
+  attempted: string,
+): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as {
+    status?: unknown;
+    code?: unknown;
+    param?: unknown;
+    message?: unknown;
+    error?: { code?: unknown; param?: unknown; message?: unknown };
+  };
+  if (candidate.status !== 400) return false;
+
+  const code = String(
+    candidate.code ?? candidate.error?.code ?? "",
+  ).toLowerCase();
+  const param = String(
+    candidate.param ?? candidate.error?.param ?? "",
+  ).toLowerCase();
+  const message = String(
+    candidate.message ?? candidate.error?.message ?? "",
+  ).toLowerCase();
+  const namesAttemptedParameter =
+    param === attempted || message.includes(attempted);
+  const declaresUnsupported =
+    code === "unsupported_parameter" ||
+    code === "unknown_parameter" ||
+    /(?:unsupported|unknown|unrecognized|not supported|does not support|not allowed|invalid parameter)/.test(
+      message,
+    );
+  return namesAttemptedParameter && declaresUnsupported;
 }
 
 function toOpenAiTool(
@@ -302,8 +423,9 @@ function toOpenAiMessages(
     if (thinkingParts.length > 0) {
       // reasoning_content is an OpenAI-compatible vendor extension not yet in
       // the SDK's ChatCompletionAssistantMessageParam type.
-      (assistantMsg as typeof assistantMsg & { reasoning_content: string }).reasoning_content =
-        thinkingParts.join("");
+      (
+        assistantMsg as typeof assistantMsg & { reasoning_content: string }
+      ).reasoning_content = thinkingParts.join("");
     }
     out.push(assistantMsg);
   } else {
@@ -324,7 +446,8 @@ function toOpenAiMessages(
         // content parts. Order matters less than presence; we send text
         // first so the model has framing context before the images.
         const parts: OpenAI.Chat.ChatCompletionContentPart[] = [];
-        if (textParts.length > 0) parts.push({ type: "text", text: textParts.join("") });
+        if (textParts.length > 0)
+          parts.push({ type: "text", text: textParts.join("") });
         for (const img of imageParts) {
           parts.push({
             type: "image_url",

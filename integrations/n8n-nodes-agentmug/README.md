@@ -102,6 +102,22 @@ npm install
 npm run build      # tsc → dist/
 ```
 
+## Dependency security boundary
+
+This package ships no runtime dependencies: `n8n-workflow` is a peer supplied
+by the n8n host, and the tarball contains only this node's compiled source,
+icons, license, README, and manifest. CI proves that its production dependency
+tree is empty, the packed artifact contains no dependency tree or lockfile, and
+`npm audit --omit=dev --audit-level moderate` reports zero findings.
+
+The n8n development CLI currently brings 13 upstream development-tooling audit
+findings (8 high and 5 moderate). In particular, n8n's exact NanoID 3.3.8 pin
+is below the 3.3.17 security fix, while its pinned LangChain releases require
+UUID `^10` even though UUID 11.1.1 is the first fixed release. n8n forbids npm
+`overrides` in community packages, so CI retains an explicit test that reports
+and detects changes to this known upstream-only risk instead of suppressing it
+or claiming a full development-tree audit is clean.
+
 MIT © Dahshan Labs
 
 ## License and trademarks

@@ -34,6 +34,32 @@ agentmug run brief.agent --input "tech" --json | jq .response
 agentmug check path/to/my.agent
 ```
 
+## Serve your workers as MCP tools
+
+`agentmug serve-mcp [path]` exposes every `.agent` file in a folder (or one
+file) as Model Context Protocol tools over stdio. Point Claude Desktop,
+Claude Code, Cursor, or any MCP host at it and each worker becomes a callable
+tool — running locally, on the keys in the server's environment, through the
+same engine and tool wiring as `agentmug run`:
+
+```jsonc
+// Claude Desktop / Claude Code MCP config
+{
+  "mcpServers": {
+    "my-workers": {
+      "command": "agentmug",
+      "args": ["serve-mcp", "C:/agents"],
+      "env": { "ANTHROPIC_API_KEY": "sk-ant-..." }
+    }
+  }
+}
+```
+
+Calls are unattended (approval-gated tools fail closed), each call reloads
+the file fresh (skills and brain notes the worker saved between calls are
+picked up), and a worker whose required sources aren't bound on this machine
+returns an actionable error instead of running ungrounded.
+
 ## Grounded local sources
 
 A `.agent` may declare the files, folders, workspaces, or KLYPIX file snapshot

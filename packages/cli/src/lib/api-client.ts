@@ -31,6 +31,7 @@ export async function apiRequest<T>(
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   path: string,
   body?: unknown,
+  options?: { headers?: Record<string, string> },
 ): Promise<T> {
   const url = `${config.host}${path.startsWith("/") ? path : `/${path}`}`;
   const res = await fetch(url, {
@@ -39,6 +40,7 @@ export async function apiRequest<T>(
       Authorization: `Bearer ${config.apiKey}`,
       "Content-Type": "application/json",
       Accept: "application/json",
+      ...options?.headers,
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });

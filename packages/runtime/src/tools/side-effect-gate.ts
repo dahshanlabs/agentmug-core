@@ -25,6 +25,7 @@ const UNTRUSTED_READ = new Set<string>([
   "web.fetch_json",
   "query_csv",
   "gmail.list_messages",
+  "list_reminders",
   "bluesky.search_posts",
   "invoke_agent",
   // shell.execute's stdout is attacker-influenced (curl/cat of remote/local
@@ -70,6 +71,8 @@ const INTERNAL_SAFE = new Set<string>([
   "image.generate",
   "code.execute",
   "create_reminder",
+  // Opens only a reviewable control-plane record; it cannot install code.
+  "request_capability",
 ]);
 
 /** Does this tool return UNTRUSTED external content (→ sets the run flag)? */
@@ -93,7 +96,9 @@ export function isSideEffecting(toolName: string): boolean {
   return true; // unknown → fail closed
 }
 
-export type GateDecision = { action: "allow" } | { action: "refuse"; message: string };
+export type GateDecision =
+  | { action: "allow" }
+  | { action: "refuse"; message: string };
 
 /**
  * Decide whether a side-effecting tool may run. Pure + total — the engine
@@ -307,7 +312,11 @@ export function detectCompositionConflicts(
       conflicts.push({
         channelKey,
         kind,
-        workers: ws.map((w) => ({ id: w.id, name: w.name, account: (w.accounts ?? [])[0] })),
+        workers: ws.map((w) => ({
+          id: w.id,
+          name: w.name,
+          account: (w.accounts ?? [])[0],
+        })),
       });
     }
   }
@@ -323,9 +332,13 @@ export function detectCompositionConflicts(
 export function resolveCompositionPolicy(
   guardrails: Record<string, unknown> | null | undefined,
 ): CompositionMode {
-  const policy = (guardrails?.["compositionPolicy"] ?? null) as { mode?: string } | null;
+  const policy = (guardrails?.["compositionPolicy"] ?? null) as {
+    mode?: string;
+  } | null;
   const m = policy?.mode;
-  return m === "consolidate" || m === "none" || m === "ask-each-run" ? m : "each";
+  return m === "consolidate" || m === "none" || m === "ask-each-run"
+    ? m
+    : "each";
 }
 
 /**

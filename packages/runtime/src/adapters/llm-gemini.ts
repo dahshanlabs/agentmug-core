@@ -43,7 +43,13 @@ export type GeminiLlmClientOptions = {
 type GenAiPart =
   | { text: string }
   | { inlineData: { mimeType: string; data: string } }
-  | { functionCall: { name: string; args?: Record<string, unknown>; id?: string } }
+  | {
+      functionCall: {
+        name: string;
+        args?: Record<string, unknown>;
+        id?: string;
+      };
+    }
   | { functionResponse: { name: string; response: unknown; id?: string } };
 
 type GenAiContent = { role: "user" | "model"; parts: GenAiPart[] };
@@ -74,8 +80,9 @@ export class GeminiLlmClient implements LlmClient {
     // Dynamic import — Gemini SDK is lazy-loaded so the bundle
     // doesn't drag it in when only Anthropic/OpenAI keys are set.
     const mod = await import("@google/genai");
-    const GoogleGenAI = (mod as unknown as { GoogleGenAI: new (cfg: object) => unknown })
-      .GoogleGenAI;
+    const GoogleGenAI = (
+      mod as unknown as { GoogleGenAI: new (cfg: object) => unknown }
+    ).GoogleGenAI;
     const ai = new GoogleGenAI(
       this.baseURL
         ? { apiKey: this.apiKey, httpOptions: { baseUrl: this.baseURL } }
@@ -89,6 +96,7 @@ export class GeminiLlmClient implements LlmClient {
             systemInstruction?: string;
             maxOutputTokens?: number;
             tools?: Array<{ functionDeclarations: unknown[] }>;
+            abortSignal?: AbortSignal;
           };
         }): Promise<AsyncIterable<GenAiStreamChunk>>;
       };
@@ -98,9 +106,16 @@ export class GeminiLlmClient implements LlmClient {
     const contents = params.messages.map((message) =>
       toGenAiContent(message, toolCallNames),
     );
-    const sdkTools = params.tools && params.tools.length > 0
-      ? [{ functionDeclarations: params.tools.map(toGenAiFunctionDeclaration) }]
-      : undefined;
+    const sdkTools =
+      params.tools && params.tools.length > 0
+        ? [
+            {
+              functionDeclarations: params.tools.map(
+                toGenAiFunctionDeclaration,
+              ),
+            },
+          ]
+        : undefined;
 
     const stream = await ai.models.generateContentStream({
       model: params.model,
@@ -108,12 +123,17 @@ export class GeminiLlmClient implements LlmClient {
       config: {
         systemInstruction: params.system,
         maxOutputTokens: params.maxTokens,
+        ...(params.signal ? { abortSignal: params.signal } : {}),
         ...(sdkTools ? { tools: sdkTools } : {}),
       },
     });
 
     let textAcc = "";
-    const toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
+    const toolCalls: Array<{
+      id: string;
+      name: string;
+      args: Record<string, unknown>;
+    }> = [];
     let finishReason = "STOP";
     let inputTokens = 0;
     let outputTokens = 0;
@@ -145,7 +165,8 @@ export class GeminiLlmClient implements LlmClient {
         for (const part of cand.content?.parts ?? []) {
           if ("functionCall" in part) {
             const id =
-              part.functionCall.id ?? `gemini_${toolCalls.length}_${Date.now()}`;
+              part.functionCall.id ??
+              `gemini_${toolCalls.length}_${Date.now()}`;
             toolCalls.push({
               id,
               name: part.functionCall.name,
@@ -196,7 +217,8 @@ function toGenAiContent(
   toolCallNames: ReadonlyMap<string, string>,
 ): GenAiContent {
   // Gemini uses "model" instead of "assistant".
-  const role: GenAiContent["role"] = msg.role === "assistant" ? "model" : "user";
+  const role: GenAiContent["role"] =
+    msg.role === "assistant" ? "model" : "user";
 
   if (typeof msg.content === "string") {
     return { role, parts: [{ text: msg.content }] };
@@ -259,7 +281,10 @@ function toGenAiFunctionDeclaration(tool: LlmToolDefinition): unknown {
 }
 
 function collectToolCallNames(
-  messages: Array<{ role: "user" | "assistant"; content: string | LlmContentBlock[] }>,
+  messages: Array<{
+    role: "user" | "assistant";
+    content: string | LlmContentBlock[];
+  }>,
 ): Map<string, string> {
   const names = new Map<string, string>();
   for (const message of messages) {

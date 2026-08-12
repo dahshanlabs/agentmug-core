@@ -53,6 +53,17 @@ async function exists(target) {
   }
 }
 
+function collectPublishedFileTargets(value, targets) {
+  if (typeof value === "string") {
+    if (value.startsWith("./")) targets.add(value.slice(2));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const nested of Object.values(value)) {
+    collectPublishedFileTargets(nested, targets);
+  }
+}
+
 function runNpmPack(packageDirectory) {
   const args = ["pack", "--dry-run", "--json"];
 
@@ -127,6 +138,19 @@ for (const [expectedName, relativeDirectory] of layout) {
   for (const required of requiredTarballFiles.get(expectedName) || []) {
     if (!files.has(required)) {
       violations.push(`${expectedName}: tarball is missing ${required}`);
+    }
+  }
+
+  const publishedTargets = new Set();
+  collectPublishedFileTargets(manifest.main, publishedTargets);
+  collectPublishedFileTargets(manifest.types, publishedTargets);
+  collectPublishedFileTargets(manifest.bin, publishedTargets);
+  collectPublishedFileTargets(manifest.exports, publishedTargets);
+  for (const target of publishedTargets) {
+    if (!files.has(target)) {
+      violations.push(
+        `${expectedName}: published entry point is missing from tarball: ${target}`,
+      );
     }
   }
 

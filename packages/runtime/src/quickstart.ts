@@ -19,6 +19,7 @@
 // production Postgres adapters, so swapping in / out is one line.
 
 import { runAgent, type EngineEvent, type RunAgentResult } from "./engine";
+import { unkeepablePromisesFromPlan } from "./capability-grounding";
 import type {
   AgentRecord,
   BlueprintRecord,
@@ -81,6 +82,18 @@ export class InMemoryPersistenceAdapter implements PersistenceAdapter {
       systemPrompt: this.agentFile.blueprint.systemPrompt,
       primaryModel: this.agentFile.blueprint.primaryModel,
       evaluation: this.agentFile.evaluation,
+      // The `.agent` file carries the capability plan, and every off-cloud
+      // surface builds its adapter from that file. Without this line the
+      // refusal block never reaches the prompt off-cloud — the model would see
+      // instructions ordering the impossible part, a tool list that looks
+      // capable of it, and nothing telling it to refuse.
+      unkeepablePromises: unkeepablePromisesFromPlan(
+        (this.agentFile.blueprint as { capabilityPlan?: unknown })
+          .capabilityPlan,
+      ),
+      capabilityPlan: (this.agentFile.blueprint as {
+        capabilityPlan?: unknown;
+      }).capabilityPlan,
       ...(this.agentFile.blueprint.maxTokens !== undefined
         ? { maxTokens: this.agentFile.blueprint.maxTokens }
         : {}),

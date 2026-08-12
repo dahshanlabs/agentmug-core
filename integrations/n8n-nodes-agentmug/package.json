@@ -37,6 +37,8 @@
     "lint": "n8n-node lint",
     "lint:fix": "n8n-node lint --fix",
     "test": "node --test test/AgentMug.node.test.mjs",
+    "test:dependency-security": "node scripts/dependency-security.test.mjs",
+    "test:upstream-dev-tooling-risk": "node scripts/upstream-dev-tooling-risk.test.mjs",
     "prepublishOnly": "n8n-node prerelease"
   },
   "files": [
@@ -58,10 +60,10 @@
     "n8n-workflow": "*"
   },
   "devDependencies": {
-    "@n8n/node-cli": "0.41.2",
+    "@n8n/node-cli": "0.43.1",
     "eslint": "9.39.4",
-    "n8n-workflow": "2.31.3",
-    "prettier": "3.8.3",
+    "n8n-workflow": "2.34.1",
+    "prettier": "3.9.6",
     "typescript": "5.9.3"
   }
 }

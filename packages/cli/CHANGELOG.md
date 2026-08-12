@@ -1,5 +1,23 @@
 # @agentmug/cli
 
+## 0.10.1
+
+### Minor Changes
+
+- 0f4886e: New CLI verbs for agents-as-code workflows: `agentmug validate <file>` checks a .agent file against the exact parser every runtime uses and warns on tools that don't exist on any surface (via the shipped capability matrix; `--strict` exits 2 on warnings for CI), and `agentmug push <file>` validates locally, previews the import (tools, connections, source rebinds, disabled schedules, private-knowledge consent), then imports to your account with an `am_user_` API key. The runtime package adds subpath exports for `schemas/agent.v1.json` and `capabilities/agent-capabilities.v1.json` so tooling can resolve both data files directly.
+- d02fbd5: Add digest-pinned verified capability execution with explicit host trust and sandbox gates, plus stable run identity support for durable, reconnect-safe background execution. Portable CLI workflows preserve capability artifacts and fail closed until the local host can verify and isolate the exact artifact digest.
+
+### Patch Changes
+
+- Updated dependencies [103737f]
+- Updated dependencies [ed5c141]
+- Updated dependencies [0f4886e]
+- Updated dependencies [3035ece]
+- Updated dependencies [11a3b17]
+- Updated dependencies [d02fbd5]
+- Updated dependencies [a05a2ef]
+  - @agentmug/runtime@0.18.0
+
 ## 0.9.2
 
 ### Patch Changes
