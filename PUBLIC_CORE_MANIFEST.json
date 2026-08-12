@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "repository": "dahshanlabs/agentmug-core",
   "source": {
-    "commitSha": "ba8e1c84b5bc20db040ac39d707249985a41d829"
+    "commitSha": "1514830107ad057ea15d2871953cd24e23a61823"
   },
   "files": [
     {
@@ -277,8 +277,8 @@
     },
     {
       "path": "package.json",
-      "sha256": "69167e9e4d05c5d310f6976ca1106c2a282e24f81e1390d00243e2f2b69013d1",
-      "size": 2988
+      "sha256": "1f60df69a8e28808df07dbc3f3dd08314e9ed722bb9486c1e61f6ea6888b0557",
+      "size": 3462
     },
     {
       "path": "packages/cli/.gitignore",
@@ -672,8 +672,8 @@
     },
     {
       "path": "packages/runtime/src/capabilities/executable-capability.ts",
-      "sha256": "d202c3eaf8a3080108ca098372b97282d3887d6443e47a4c04ade9fb6a829523",
-      "size": 11356
+      "sha256": "9c15beaed0a4926f45c201020e9184d775eb2e42037ce1dc0052e00073bda102",
+      "size": 20752
     },
     {
       "path": "packages/runtime/src/capability-grounding.ts",
@@ -832,8 +832,8 @@
     },
     {
       "path": "packages/runtime/src/tools/builtin/capability-execute.test.ts",
-      "sha256": "46f39ea5c2f11f3f9a3937e01be4fdea6c18028d2de577ae4f6548a5315ce98f",
-      "size": 6332
+      "sha256": "53f8a1f32f152ea14077f7ffb29a369e98fd8ec0723453bc52e5cd889e843144",
+      "size": 8531
     },
     {
       "path": "packages/runtime/src/tools/builtin/capability-execute.ts",
@@ -1097,18 +1097,18 @@
     },
     {
       "path": "scripts/audit-public-core.mjs",
-      "sha256": "b5a5156bfd9605c0fab7be9abbc8fc5657aefe2d76a27573ea14381ec3ddb4cc",
-      "size": 24475
+      "sha256": "af2a5746a8a2966bb97893513df83751950fdc7e7a5d084348934bf7119aa732",
+      "size": 27625
     },
     {
       "path": "scripts/audit-public-core.test.mjs",
-      "sha256": "14f3900b86429c2c7df2726ea6516ecdd0093552fb2ccd8702388e27cf78a556",
-      "size": 3330
+      "sha256": "28507d1495c17df90be90197e5c33d78585e057971f77959412bdcb468b3b724",
+      "size": 8520
     },
     {
       "path": "scripts/check-production-licenses.mjs",
-      "sha256": "32e6b39f95495696208caf09d4afd23cf6b2ba18445e7d96e109d642ada0b39d",
-      "size": 3367
+      "sha256": "91c6f2ddbe5ed30612458cb4667a589d0d03d0eaf93fbfccebf8e7c12a949bc0",
+      "size": 9123
     },
     {
       "path": "scripts/check-public-package-licenses.mjs",
@@ -1117,8 +1117,8 @@
     },
     {
       "path": "scripts/check-public-package-licenses.test.mjs",
-      "sha256": "8664842105203df7627aa4f1665d3253de8682b49fcd7d5b6da48a066dc919ee",
-      "size": 2136
+      "sha256": "06c9cc73ea1943adefcbf51e04f47e24e6610a7a3f70fa46784c7e50b9083f79",
+      "size": 6056
     },
     {
       "path": "scripts/guard-public-publish.mjs",

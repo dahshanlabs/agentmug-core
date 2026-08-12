@@ -4,6 +4,7 @@ import {
   EXECUTABLE_CAPABILITY_KIND,
   EXECUTABLE_CAPABILITY_POLICY,
   executableCapabilitySha256,
+  portablePythonPolicyChecks,
   type AgentExecutableCapabilityV1,
   type UnsignedAgentExecutableCapabilityV1,
 } from "../../capabilities/executable-capability";
@@ -19,6 +20,69 @@ const context: ToolExecutionContext = {
   userId: "user-1",
   recursionDepth: 0,
 };
+
+function importPolicy(source: string) {
+  return portablePythonPolicyChecks(source).find(
+    (check) => check.code === "imports_allowlist",
+  )!;
+}
+
+test("portable Python imports use a bounded fail-closed parser", () => {
+  for (const source of [
+    "import math, json as codec",
+    "from collections import Counter",
+    "from datetime import (datetime as DateTime, timezone,)",
+    "from decimal import (\n    Decimal,\n    localcontext,\n)",
+    "from enum import (# names stay deterministic\n    Enum,\n    auto, # trailing comment\n)",
+    "import statistics  # bounded transforms only",
+    "from fractions import Fraction  # exact arithmetic",
+    "import operator# comment need not have leading whitespace",
+    "if payload: import functools",
+    "def helper(): import itertools; return itertools.count()",
+    "label = 'import os; from pathlib import Path'",
+    "# import os",
+  ]) {
+    assert.equal(
+      importPolicy(`${source}\ndef run(payload):\n    return payload`).passed,
+      true,
+      source,
+    );
+  }
+
+  for (const source of [
+    "import os",
+    "from pathlib import Path",
+    "import math; import os",
+    "from math import sqrt; import os",
+    "x = 1; import os",
+    "x = 1\rimport os",
+    "if True: import os",
+    "def helper(): import os; return os.getcwd()",
+    "try: from pathlib import Path",
+    "import math as",
+    "from math import sqrt as",
+    "from math import (sqrt",
+    `import ${" ".repeat(20_000)}os`,
+  ]) {
+    const policy = importPolicy(`${source}\ndef run(payload):\n    return payload`);
+    assert.equal(policy.passed, false, source);
+  }
+});
+
+test("source screening rejects allowed-module runtime and filesystem escapes", () => {
+  const source = [
+    "import typing",
+    "def run(payload):",
+    "    modules = typing.sys.modules",
+    '    filesystem = modules["o" + "s"]',
+    '    return {"payload": payload, "entries": filesystem.listdir(".")}',
+  ].join("\n");
+  const failed = portablePythonPolicyChecks(source)
+    .filter((check) => !check.passed)
+    .map((check) => check.code);
+  assert.ok(failed.includes("no_runtime_introspection"));
+  assert.ok(failed.includes("no_filesystem"));
+});
 
 async function fixture() {
   const unsigned: UnsignedAgentExecutableCapabilityV1 = {

@@ -26,6 +26,7 @@ export type AgentExecutableCapabilityV1 = {
     /** Value-free JSON Schema inferred from the verified result. */
     outputSchema: Record<string, unknown>;
   };
+  /** Declared source policy; the executing host's sandbox remains authority. */
   permissions: {
     network: false;
     secrets: [];
@@ -90,7 +91,13 @@ const DENIED_SOURCE: Array<{
     code: "no_dynamic_code",
     label: "Dynamic code execution is denied",
     pattern:
-      /\b(eval|exec|compile|__import__|globals|locals|breakpoint)\s*\(|\b(getattr|setattr|delattr)\s*\(/i,
+      /\b(eval|exec|compile|__import__|globals|locals|vars|breakpoint)\s*\(|\b(getattr|setattr|delattr|attrgetter|methodcaller)\s*\(/i,
+  },
+  {
+    code: "no_runtime_introspection",
+    label: "Runtime and frame introspection is denied",
+    pattern:
+      /\b(sys|_sys|bltns|builtins|importlib|pkgutil|inspect|gi_frame|cr_frame|ag_frame|f_globals|f_locals|tb_frame)\b/i,
   },
   {
     code: "no_secrets",
@@ -102,7 +109,7 @@ const DENIED_SOURCE: Array<{
     code: "no_filesystem",
     label: "Filesystem access is denied",
     pattern:
-      /\bopen\s*\(|\b(pathlib|shutil|tempfile)\b|\b(write_text|write_bytes|read_text|read_bytes|unlink|remove|rmtree)\s*\(/i,
+      /\bopen\s*\(|\b(pathlib|shutil|tempfile)\b|\b(write_text|write_bytes|read_text|read_bytes|listdir|scandir|stat|lstat|walk|chdir|mkdir|makedirs|rename|replace|unlink|remove|rmdir|rmtree|chmod|chown|link|symlink|truncate)\s*\(/i,
   },
   {
     code: "no_dunder_escape",
@@ -111,30 +118,319 @@ const DENIED_SOURCE: Array<{
   },
 ];
 
+const INVALID_PYTHON_IMPORT = "(invalid import syntax)";
+
+function isPythonHorizontalWhitespace(character: string | undefined): boolean {
+  return (
+    character === " " ||
+    character === "\t" ||
+    character === "\f" ||
+    character === "\v"
+  );
+}
+
+function skipPythonHorizontalWhitespace(value: string, start: number): number {
+  let index = start;
+  while (
+    index < value.length &&
+    isPythonHorizontalWhitespace(value[index])
+  ) {
+    index += 1;
+  }
+  return index;
+}
+
+function skipPythonImportTrivia(value: string, start: number): number {
+  let index = start;
+  while (index < value.length) {
+    index = skipPythonHorizontalWhitespace(value, index);
+    while (value[index] === "\n" || value[index] === "\r") {
+      index += 1;
+      index = skipPythonHorizontalWhitespace(value, index);
+    }
+    if (value[index] !== "#") return index;
+    while (
+      index < value.length &&
+      value[index] !== "\n" &&
+      value[index] !== "\r"
+    ) {
+      index += 1;
+    }
+    while (value[index] === "\n" || value[index] === "\r") index += 1;
+  }
+  return index;
+}
+
+function isPythonIdentifierStart(character: string | undefined): boolean {
+  if (!character) return false;
+  const code = character.charCodeAt(0);
+  return (
+    character === "_" ||
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122)
+  );
+}
+
+function isPythonIdentifierPart(character: string | undefined): boolean {
+  if (isPythonIdentifierStart(character)) return true;
+  if (!character) return false;
+  const code = character.charCodeAt(0);
+  return code >= 48 && code <= 57;
+}
+
+function readPythonIdentifier(
+  value: string,
+  start: number,
+): { value: string; next: number } | undefined {
+  if (!isPythonIdentifierStart(value[start])) return undefined;
+  let next = start + 1;
+  while (next < value.length && isPythonIdentifierPart(value[next])) next += 1;
+  return { value: value.slice(start, next), next };
+}
+
+function readQualifiedPythonModule(
+  value: string,
+  start: number,
+): { root: string; next: number } | undefined {
+  const first = readPythonIdentifier(value, start);
+  if (!first) return undefined;
+  let next = first.next;
+  while (value[next] === ".") {
+    const segment = readPythonIdentifier(value, next + 1);
+    if (!segment) return undefined;
+    next = segment.next;
+  }
+  return { root: first.value, next };
+}
+
+function pythonStatementBody(
+  line: string,
+  keyword: "from" | "import",
+): string | undefined {
+  const start = skipPythonHorizontalWhitespace(line, 0);
+  if (!line.startsWith(keyword, start)) return undefined;
+  const afterKeyword = start + keyword.length;
+  if (!isPythonHorizontalWhitespace(line[afterKeyword])) return undefined;
+  return line.slice(skipPythonHorizontalWhitespace(line, afterKeyword));
+}
+
+function readPythonAlias(value: string, start: number): number | undefined {
+  const beforeAlias = start;
+  const aliasKeyword = skipPythonHorizontalWhitespace(value, start);
+  if (
+    aliasKeyword === beforeAlias ||
+    !value.startsWith("as", aliasKeyword) ||
+    !isPythonHorizontalWhitespace(value[aliasKeyword + 2])
+  ) {
+    return start;
+  }
+  const aliasStart = skipPythonHorizontalWhitespace(value, aliasKeyword + 2);
+  return readPythonIdentifier(value, aliasStart)?.next;
+}
+
+function directPythonImports(value: string): string[] | undefined {
+  const modules: string[] = [];
+  let index = 0;
+  while (index < value.length) {
+    index = skipPythonHorizontalWhitespace(value, index);
+    const module = readQualifiedPythonModule(value, index);
+    if (!module) return undefined;
+    modules.push(module.root);
+    index = readPythonAlias(value, module.next) ?? -1;
+    if (index < 0) return undefined;
+    const separator = skipPythonHorizontalWhitespace(value, index);
+    if (separator === value.length) return modules;
+    if (value[separator] === "#") return modules;
+    index = separator;
+    if (value[index] !== ",") return undefined;
+    index += 1;
+    if (skipPythonHorizontalWhitespace(value, index) === value.length) {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function validFromImportTargets(value: string, start: number): boolean {
+  let index = skipPythonImportTrivia(value, start);
+  let parenthesized = false;
+  if (value[index] === "(") {
+    parenthesized = true;
+    index = skipPythonImportTrivia(value, index + 1);
+  }
+  if (value[index] === "*") {
+    const end = index + 1;
+    index = skipPythonImportTrivia(value, end);
+    if (parenthesized && value[index] === ")") {
+      index = skipPythonImportTrivia(value, index + 1);
+    }
+    return (
+      index === value.length ||
+      (!parenthesized && value[index] === "#")
+    );
+  }
+
+  let found = false;
+  while (index < value.length) {
+    const imported = readPythonIdentifier(value, index);
+    if (!imported) return false;
+    found = true;
+    const importedEnd = readPythonAlias(value, imported.next) ?? -1;
+    index = importedEnd;
+    if (index < 0) return false;
+    index = parenthesized
+      ? skipPythonImportTrivia(value, index)
+      : skipPythonHorizontalWhitespace(value, index);
+    if (parenthesized && value[index] === ")") {
+      index = skipPythonImportTrivia(value, index + 1);
+      return found && index === value.length;
+    }
+    if (index === value.length) return found && !parenthesized;
+    if (!parenthesized && value[index] === "#") {
+      return found;
+    }
+    if (value[index] !== ",") return false;
+    index = parenthesized
+      ? skipPythonImportTrivia(value, index + 1)
+      : skipPythonHorizontalWhitespace(value, index + 1);
+    if (parenthesized && value[index] === ")") {
+      index = skipPythonImportTrivia(value, index + 1);
+      return found && index === value.length;
+    }
+  }
+  return false;
+}
+
+function fromPythonImport(value: string): string | undefined {
+  const moduleStart = skipPythonHorizontalWhitespace(value, 0);
+  const module = readQualifiedPythonModule(value, moduleStart);
+  if (!module) return undefined;
+  const importKeyword = skipPythonHorizontalWhitespace(value, module.next);
+  if (
+    importKeyword === module.next ||
+    !value.startsWith("import", importKeyword) ||
+    !isPythonHorizontalWhitespace(value[importKeyword + 6])
+  ) {
+    return undefined;
+  }
+  const targets = skipPythonHorizontalWhitespace(value, importKeyword + 6);
+  return validFromImportTargets(value, targets) ? module.root : undefined;
+}
+
+/**
+ * Split Python into simple-statement candidates without interpreting text in
+ * comments or string literals. Imports are statements, so every valid import
+ * starts at the file boundary, a logical newline, a semicolon, or after the
+ * colon introducing a one-line suite (for example `if ready: import math`).
+ *
+ * The scanner is deliberately single-pass and bounded by the source length.
+ * It is not a Python parser: malformed source is rejected later by the host.
+ */
+function pythonSimpleStatements(code: string): string[] {
+  const statements: string[] = [];
+  let start = 0;
+  let index = 0;
+  let bracketDepth = 0;
+  let comment = false;
+  let quote: "'" | '"' | undefined;
+  let tripleQuoted = false;
+
+  const finishStatement = (end: number) => {
+    statements.push(code.slice(start, end));
+    start = end + 1;
+  };
+
+  while (index < code.length) {
+    const character = code[index];
+
+    if (comment) {
+      if (character === "\n" || character === "\r") {
+        comment = false;
+        if (bracketDepth === 0) finishStatement(index);
+      }
+      index += 1;
+      continue;
+    }
+
+    if (quote) {
+      if (character === "\\") {
+        index += Math.min(2, code.length - index);
+        continue;
+      }
+      if (
+        tripleQuoted &&
+        character === quote &&
+        code[index + 1] === quote &&
+        code[index + 2] === quote
+      ) {
+        quote = undefined;
+        tripleQuoted = false;
+        index += 3;
+        continue;
+      }
+      if (!tripleQuoted && character === quote) quote = undefined;
+      index += 1;
+      continue;
+    }
+
+    if (character === "#") {
+      comment = true;
+      index += 1;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      tripleQuoted =
+        code[index + 1] === character && code[index + 2] === character;
+      index += tripleQuoted ? 3 : 1;
+      continue;
+    }
+    if (character === "(" || character === "[" || character === "{") {
+      bracketDepth += 1;
+      index += 1;
+      continue;
+    }
+    if (character === ")" || character === "]" || character === "}") {
+      bracketDepth = Math.max(0, bracketDepth - 1);
+      index += 1;
+      continue;
+    }
+    if (
+      bracketDepth === 0 &&
+      (character === "\n" ||
+        character === "\r" ||
+        character === ";" ||
+        character === ":")
+    ) {
+      finishStatement(index);
+    }
+    index += 1;
+  }
+
+  statements.push(code.slice(start));
+  return statements;
+}
+
 function importedPythonModules(code: string): string[] {
   const modules: string[] = [];
-  for (const line of code.split("\n")) {
-    const from = line.match(/^\s*from\s+([A-Za-z_][\w.]*)\s+import\s+/);
-    if (from?.[1]) modules.push(from[1].split(".")[0]!);
-    const direct = line.match(/^\s*import\s+(.+)$/);
-    if (!direct?.[1]) continue;
-    modules.push(
-      ...direct[1]
-        .split(",")
-        .map(
-          (item) =>
-            item
-              .trim()
-              .split(/\s+as\s+/)[0]!
-              .split(".")[0]!,
-        )
-        .filter(Boolean),
-    );
+  for (const statement of pythonSimpleStatements(code)) {
+    const fromBody = pythonStatementBody(statement, "from");
+    if (fromBody !== undefined) {
+      modules.push(fromPythonImport(fromBody) ?? INVALID_PYTHON_IMPORT);
+      continue;
+    }
+    const importBody = pythonStatementBody(statement, "import");
+    if (importBody === undefined) continue;
+    modules.push(...(directPythonImports(importBody) ?? [INVALID_PYTHON_IMPORT]));
   }
   return modules;
 }
 
-/** Defense-in-depth policy every executing host re-runs, even after proof. */
+/**
+ * Conservative source screening every executing host re-runs after proof.
+ * This is defense in depth, not a Python sandbox: the host must still isolate
+ * the interpreter from its filesystem/secrets and enforce no network access.
+ */
 export function portablePythonPolicyChecks(
   source: string,
 ): PortableCapabilityPolicyCheck[] {

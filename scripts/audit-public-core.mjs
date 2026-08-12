@@ -65,12 +65,8 @@ const exportMarkerName = ".agentmug-public-export";
 const commitShaPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const sha256Pattern = /^[a-f0-9]{64}$/;
 
-const ignoredDirectoryNames = new Set([
-  ".git",
-  "coverage",
-  "node_modules",
-  "target",
-]);
+const ignoredEntryNames = new Set([".git"]);
+const ignoredDirectoryNames = new Set(["coverage", "node_modules", "target"]);
 const generatedBuildDirectoryNames = new Set(["dist"]);
 
 const requiredPaths = [
@@ -270,6 +266,10 @@ export async function collectFiles(root, directory = root, violations = []) {
   entries.sort((left, right) => left.name.localeCompare(right.name));
 
   for (const entry of entries) {
+    // A normal clone exposes .git as a directory, while a linked worktree
+    // exposes it as a file. Neither form is public source or manifest input.
+    if (ignoredEntryNames.has(entry.name)) continue;
+
     const absolute = path.join(directory, entry.name);
     const relative = normalizeRelative(path.relative(root, absolute));
     const stat = await lstat(absolute);
@@ -394,9 +394,99 @@ async function validatePackages(root, publicRepository, violations) {
   const rootPackage = JSON.parse(
     await readFile(path.join(root, "package.json"), "utf8"),
   );
-  if (rootPackage.private !== true || rootPackage.license !== "Apache-2.0") {
+  validatePublicRootIdentity(rootPackage, publicRepository, violations);
+  validateRuntimeTestCoverage(rootPackage, violations);
+  validateVersionPackageLockSync(rootPackage, violations);
+  validateLicenseGateScope(rootPackage, publicRepository, violations);
+}
+
+const REQUIRED_PUBLIC_RUNTIME_TESTS = [
+  "test:artifact-contract",
+  "test:capability-execute",
+  "test:architectures",
+  "test:source-contract",
+  "test:engine-sources",
+  "test:evaluations",
+  "test:net-guard",
+  "test:llm-routing",
+  "test:actions",
+  "test:schema-drift",
+  "test:deployment-contract",
+];
+
+export function validateRuntimeTestCoverage(rootPackage, violations) {
+  const testCommand = rootPackage?.scripts?.test;
+  if (typeof testCommand !== "string") {
+    violations.push("root package.json: scripts.test is required");
+    return;
+  }
+  const steps = testCommand.split("&&").map((step) => step.trim());
+  let previousIndex = -1;
+  for (const script of REQUIRED_PUBLIC_RUNTIME_TESTS) {
+    const command = `pnpm --filter @agentmug/runtime run ${script}`;
+    const index = steps.indexOf(command);
+    if (index < 0) {
+      violations.push(
+        `root package.json: public verification must run runtime ${script}`,
+      );
+      continue;
+    }
+    if (index <= previousIndex) {
+      violations.push(
+        `root package.json: public runtime verification order must match the private suite (${script})`,
+      );
+    }
+    previousIndex = index;
+  }
+}
+
+export function validateVersionPackageLockSync(rootPackage, violations) {
+  const command = rootPackage?.scripts?.["version-packages"];
+  const versionStep = "changeset version";
+  const lockfileStep =
+    "pnpm install --lockfile-only --ignore-scripts --no-frozen-lockfile";
+  const manifestStep =
+    "node scripts/audit-public-core.mjs --root . --public-repository dahshanlabs/agentmug-core --write-manifest";
+  const expectedCommand = [versionStep, lockfileStep, manifestStep].join(
+    " && ",
+  );
+  if (command !== expectedCommand) {
     violations.push(
-      "root package.json must be private and licensed Apache-2.0",
+      "root package.json: version-packages must refresh the lockfile without lifecycle scripts before resealing the manifest",
+    );
+  }
+}
+
+export function validatePublicRootIdentity(
+  rootPackage,
+  publicRepository,
+  violations,
+) {
+  if (
+    rootPackage?.name !== "agentmug-core" ||
+    rootPackage?.private !== true ||
+    rootPackage?.license !== "Apache-2.0" ||
+    rootPackage?.repository?.url !==
+      `https://github.com/${publicRepository}.git`
+  ) {
+    violations.push(
+      `root package.json must identify the private Apache-2.0 ${publicRepository} repository`,
+    );
+  }
+}
+
+export function validateLicenseGateScope(
+  rootPackage,
+  publicRepository,
+  violations,
+) {
+  const command = rootPackage?.scripts?.["security:licenses"];
+  const expected =
+    `node scripts/check-public-package-licenses.mjs && ` +
+    `node scripts/check-production-licenses.mjs --scope public --repository ${publicRepository}`;
+  if (command !== expected) {
+    violations.push(
+      `root package.json: security:licenses must bind public exceptions to ${publicRepository}`,
     );
   }
 }
