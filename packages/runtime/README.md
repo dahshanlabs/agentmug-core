@@ -42,6 +42,7 @@ That's the whole API for a quickstart. `quickRun()` wires in-memory persistence 
 - **Tool registry** — built-in tool _definitions_ (Gmail, Slack, GitHub, Calendar, web search/browse, image gen, code exec, memory, shell, Twilio/WhatsApp/Telegram/Discord, Sheets, and more), plus pluggable MCP and HTTP tools. **Executors are supplied by the host**, so which of these actually run depends on where you run it.
 - **MCP tool client** — call out to MCP servers (LangGraph, Continue toolbox, etc.). To be called _as_ an MCP server, use [`@agentmug/mcp-bridge`](https://npmjs.com/package/@agentmug/mcp-bridge), which proxies to a hosted worker; this package does not contain an MCP server.
 - **Portable `.agent` files** — declarative JSON spec (system prompt + tools + parameters + inputs/outputs + source requirements). Version-controllable. Forkable.
+- **Explicit executable boundary** — `agent.v1` is permanently code-free. A worker that carries a reusable executable capability uses `agent.v2` capsules; capsules are quarantined evidence and cannot authorize themselves on a receiving host.
 - **Portable evaluation contracts** — deterministic source-readiness, freshness, citation, write-boundary, and bounded JSON-output checks execute in the engine and appear in the same run receipt in cloud, CLI, desktop, and embedded hosts. Prose-only invariants are explicitly skipped unless a host supplies a private regression suite; they are never reported as passed by guesswork.
 - **Verified sources + receipts** — a worker declares what evidence its job requires; the host binds the private material at runtime (files, folders, workspaces, providers, or KLYPIX brain snapshots). A required source that is missing, unauthorized, stale, or unreadable fails **before the first LLM call**, retrieved evidence carries citations and revisions, and every run returns a structured receipt of what it read. Sources are **read-only** — no adapter implements `write()`, and there is no upstream sync. Which source kinds are readable depends on the host adapter.
 
@@ -67,6 +68,13 @@ That's the whole API for a quickstart. `quickRun()` wires in-memory persistence 
 Load it with `parseAgentFile(json)` and pass it to `quickRun()`. Production
 hosts call `runAgent()` with a `PersistenceAdapter` that supplies the agent and
 blueprint records.
+
+Ordinary workers should stay on `agent.v1`. `agent.v2` is emitted only when a
+digest-pinned executable capability capsule is present. A v1-only runtime
+rejects v2 by `$schema`; a current runtime still blocks capsule execution until
+the host independently trusts the digest and provides an isolated no-network
+sandbox. See the
+[`agent.v2` specification](https://agentmug.com/spec/agent-v2.md).
 
 ### Private artifact bindings
 

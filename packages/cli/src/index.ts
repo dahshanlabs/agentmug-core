@@ -24,6 +24,7 @@ import {
   NATIVE_PROVIDERS,
   InMemoryToolRegistry,
   registerCoreToolsFor,
+  registerCapabilityExecutionTool,
   registerPortableManagerTools,
   registerWebhookTools,
   normalizeTools,
@@ -38,12 +39,15 @@ import {
   BrainLookupExecutor,
   buildBrainIndex,
   createReminderDefinition,
+  capabilityExecuteDefinition,
   twilioSendSmsDefinition,
   twilioSendWhatsappDefinition,
   telegramSendMessageDefinition,
   discordSendMessageDefinition,
   slackSendMessageDefinition,
   parseAgentFile,
+  toAsciiSlug,
+  getCapabilityCapsules,
   getRequiredCredentials,
   getScheduleTriggers,
   unsupportedTriggers,
@@ -66,6 +70,7 @@ import {
   type ReminderContext,
   type RemindersAdapter,
   prepareSourceExecution,
+  unkeepablePromisesFromPlan,
 } from "@agentmug/runtime";
 import { FileAgentFileStore } from "./agent-file-store.js";
 import { FileAgentFolderStore } from "./agent-folder-store.js";
@@ -124,6 +129,21 @@ Available now (v0.1):
                                                          needs vs what THIS machine has
                                                          (read-only, never runs the agent;
                                                          exit 1 if anything is missing)
+  agentmug validate <path-to-.agent> [--strict]          Validate against the exact parser
+                                                         every runtime uses + warn on tools
+                                                         that don't exist on any surface
+                                                         (exit 1 invalid; --strict: exit 2
+                                                         on warnings — for CI)
+  agentmug serve-mcp [path]                              Serve local .agent file(s) as MCP
+                                                         tools over stdio. Point Claude
+                                                         Desktop / Claude Code / Cursor at
+                                                         it and every worker in the folder
+                                                         becomes a callable tool — runs
+                                                         locally on YOUR keys, unattended.
+  agentmug push <path-to-.agent> [--preview-only]        Validate locally, preview the
+                [--confirm-private-knowledge]            import (tools/credentials/rebinds),
+                                                         then import to your account
+                                                         (needs AGENTMUG_API_KEY)
 
 Private grounded sources (requirements travel; local paths never enter .agent):
   agentmug sources list <agent>                         Show required and optional sources
@@ -138,7 +158,7 @@ Private grounding receipts:
   agentmug receipts delete <agent> <run-id>             Explicitly remove one receipt
 
 Cloud (agent-controllable surface — set AGENTMUG_API_KEY):
-  agentmug create --prompt "..."                         Create a Claude-designed agent on agentmug.com
+  agentmug create --prompt "..." [--idempotency-key k]   Create a durable agent build on agentmug.com
   agentmug list                                          List agents in your account
   agentmug get <agent-id>                                Show agent details
   agentmug fork <agent-id> [--as <new-name>]             Fork an existing agent
@@ -193,6 +213,9 @@ type CliArgs = {
   command:
     | "run"
     | "check"
+    | "validate"
+    | "serve-mcp"
+    | "push"
     | "help"
     | "create"
     | "list"
@@ -240,6 +263,9 @@ function parseArgs(argv: string[]): CliArgs {
   const knownCommands: CliArgs["command"][] = [
     "run",
     "check",
+    "validate",
+    "serve-mcp",
+    "push",
     "create",
     "list",
     "get",
@@ -301,6 +327,7 @@ function parseArgs(argv: string[]): CliArgs {
   if (
     cmd === "run" ||
     cmd === "check" ||
+    cmd === "serve-mcp" ||
     cmd === "sources" ||
     cmd === "receipts"
   ) {
@@ -401,6 +428,12 @@ class FileAgentPersistence implements PersistenceAdapter {
       evaluation: this.agentFile.evaluation,
       // Carry the side-effect gate so the injection backstop holds off-cloud.
       guardrails: this.agentFile.blueprint.guardrails,
+      // And the refusal block, for the same reason: a headless run that does
+      // not know what it cannot do will improvise and report it as done.
+      unkeepablePromises: unkeepablePromisesFromPlan(
+        (this.agentFile.blueprint as { capabilityPlan?: unknown })
+          .capabilityPlan,
+      ),
     };
   }
   async createRun(run: NewRun): Promise<void> {
@@ -830,6 +863,489 @@ async function checkAgent(args: CliArgs): Promise<number> {
   return missing === 0 ? 0 : 1;
 }
 
+/**
+ * `agentmug serve-mcp [path]` — expose local .agent file(s) as MCP tools over
+ * stdio. Point Claude Desktop / Claude Code / Cursor / any MCP host at it:
+ *
+ *   { "mcpServers": { "my-workers": {
+ *       "command": "agentmug", "args": ["serve-mcp", "C:/agents"] } } }
+ *
+ * Every worker in the folder (or the single file) becomes one callable tool.
+ * Calls run LOCALLY through the same engine + tool wiring as `agentmug run` —
+ * the host's LLM never sees your provider keys, and the worker's own model
+ * runs on the keys in THIS process's environment. Unattended: approval-gated
+ * executors fail closed. Fail-closed sources: a worker whose required sources
+ * aren't bound on this machine returns an actionable error instead of running
+ * ungrounded.
+ */
+async function serveMcpCommand(args: CliArgs): Promise<number> {
+  const { Server } = await import("@modelcontextprotocol/sdk/server/index.js");
+  const { StdioServerTransport } =
+    await import("@modelcontextprotocol/sdk/server/stdio.js");
+  const { ListToolsRequestSchema, CallToolRequestSchema } =
+    await import("@modelcontextprotocol/sdk/types.js");
+  const { stat, readdir } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+
+  const target = resolvePath(args.agentPath ?? ".");
+  const targetStat = await stat(target).catch(() => null);
+  if (!targetStat) {
+    process.stderr.write(`serve-mcp: path not found: ${target}\n`);
+    return 2;
+  }
+  const agentPaths = targetStat.isDirectory()
+    ? (await readdir(target))
+        .filter((name) => name.endsWith(".agent"))
+        .map((name) => join(target, name))
+    : [target];
+  if (agentPaths.length === 0) {
+    process.stderr.write(
+      `serve-mcp: no .agent files in ${target}. Create one on agentmug.com and download it, or run 'agentmug create'.\n`,
+    );
+    return 2;
+  }
+
+  // Load + slug every agent up front. Invalid files are skipped with a
+  // warning — one broken file must not take the whole server down.
+  type Served = { slug: string; path: string; file: AgentFileV1 };
+  const served: Served[] = [];
+  const usedSlugs = new Set<string>();
+  for (const path of agentPaths) {
+    try {
+      const file = await loadAgentFile(path);
+      const base = toAsciiSlug(file.name, 48) || "worker";
+      let slug = base;
+      let n = 2;
+      while (usedSlugs.has(slug)) slug = `${base}-${n++}`;
+      usedSlugs.add(slug);
+      served.push({ slug, path, file });
+    } catch (err) {
+      process.stderr.write(
+        `serve-mcp: skipping ${path}: ${terminalSafeOneLine(
+          err instanceof Error ? err.message : String(err),
+        )}\n`,
+      );
+    }
+  }
+  if (served.length === 0) {
+    process.stderr.write("serve-mcp: no valid .agent files to serve.\n");
+    return 2;
+  }
+
+  const toolFor = (entry: Served) => {
+    const params = entry.file.parameters ?? [];
+    const properties: Record<string, unknown> = {
+      message: {
+        type: "string",
+        description: "What the worker should do or handle, in plain language.",
+      },
+    };
+    for (const p of params) {
+      properties[p.name] = {
+        type:
+          p.type === "number"
+            ? "number"
+            : p.type === "boolean"
+              ? "boolean"
+              : "string",
+        description: p.description || p.label || p.name,
+      };
+    }
+    const caveats = entry.file.blueprint.caveats ?? [];
+    const caveatNote =
+      caveats.length > 0
+        ? ` Note: ${caveats
+            .map((c) => `${c.requested} → ${c.doing}`)
+            .join("; ")
+            .slice(0, 400)}`
+        : "";
+    return {
+      name: entry.slug,
+      description:
+        `${entry.file.description || entry.file.name} (AgentMug worker, runs locally).${caveatNote}`.slice(
+          0,
+          1_000,
+        ),
+      inputSchema: {
+        type: "object" as const,
+        properties,
+        required: ["message"],
+      },
+    };
+  };
+
+  const server = new Server(
+    { name: "agentmug-serve-mcp", version: "1.0.0" },
+    { capabilities: { tools: {} } },
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, () => ({
+    tools: served.map(toolFor),
+  }));
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const entry = served.find((s) => s.slug === request.params.name);
+    const fail = (text: string) => ({
+      content: [{ type: "text" as const, text }],
+      isError: true,
+    });
+    if (!entry) return fail(`Unknown tool: ${request.params.name}`);
+    try {
+      // Reload fresh on every call: self-skilling and the brain write back
+      // to the file between calls, and the owner may edit it while served.
+      const file = await loadAgentFile(entry.path);
+      const model = file.blueprint.primaryModel || "claude-sonnet-4-6";
+      const neededVar = requiredProviderEnvVar(model);
+      if (neededVar && !process.env[neededVar]) {
+        return fail(
+          `Worker '${file.name}' uses model '${model}' — set ${neededVar} in the MCP server's environment and restart.`,
+        );
+      }
+      const sourceBindingStore = new CliSourceBindingStore();
+      const sourceRuntime = await prepareCliSources(entry.path, file, {
+        store: sourceBindingStore,
+      });
+      if (!sourceRuntime.ready) {
+        return fail(
+          `Worker '${file.name}' source requirements are not ready on this machine:\n` +
+            sourceReadinessErrorLines(file, sourceRuntime).join("\n") +
+            `\nBind them with: agentmug sources bind ${entry.path} <source-id> <path>`,
+        );
+      }
+      const rawArgs = (request.params.arguments ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const message =
+        typeof rawArgs.message === "string" ? rawArgs.message : "";
+      if (!message.trim()) return fail("Provide a non-empty 'message'.");
+      // "message" is the run input — but a .agent may ALSO declare a
+      // parameter legally named "message" ({{params.message}} in its
+      // prompt). When it does, the same value feeds both, so the
+      // placeholder is substituted instead of silently left dangling.
+      const declaredParams = new Set(
+        (file.parameters ?? []).map((p) => p.name),
+      );
+      const parameterValues: Record<string, string | number | boolean> = {};
+      for (const [k, v] of Object.entries(rawArgs)) {
+        if (k === "message" && !declaredParams.has("message")) continue;
+        if (
+          typeof v === "string" ||
+          typeof v === "number" ||
+          typeof v === "boolean"
+        )
+          parameterValues[k] = v;
+      }
+
+      const llm = createMultiLlmClientFromEnv(process.env);
+      const tracing = new SilentTracing();
+      const registry = buildLocalToolRegistry({
+        agentFile: file,
+        agentPath: entry.path,
+        remindersFile: args.remindersFile,
+        llm,
+        tracing,
+        sourceBindingStore,
+        sourceRuntime,
+      });
+      const hasSources = (file.sources?.length ?? 0) > 0;
+      const hasPortableReceipt =
+        hasSources || (file.evaluation?.checks.length ?? 0) > 0;
+      const result = await runAgent({
+        agentId: file.id,
+        userId: "cli-local",
+        userInput: message,
+        adapters: {
+          persistence: new FileAgentPersistence(file),
+          tracing,
+          llm,
+          credentialResolver: new EnvCredentialResolver(),
+          ...(hasPortableReceipt
+            ? {
+                receipts: new CliReceiptStore(entry.path, file.id, {
+                  agent: file,
+                  bindings: sourceRuntime.bindings,
+                }),
+              }
+            : {}),
+        },
+        tools: registry,
+        sources: prepareSourceExecution({
+          requirements: file.sources ?? [],
+          bindings: sourceRuntime.bindings,
+          adapters: hasSources ? [sourceRuntime.adapter] : [],
+        }),
+        evaluation: file.evaluation,
+        parameterValues,
+        memoryContext: buildBrainIndex(file.brain),
+        // An MCP host is a machine caller — no human present to approve.
+        unattended: true,
+        onEvent: () => {},
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: result.output || "(the worker returned no text)",
+          },
+        ],
+        ...(result.status === "failed" ? { isError: true } : {}),
+      };
+    } catch (err) {
+      return fail(
+        `Worker run failed: ${terminalSafeOneLine(
+          err instanceof Error ? err.message : String(err),
+          4_000,
+        )}`,
+      );
+    }
+  });
+
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  process.stderr.write(
+    `agentmug serve-mcp ready — ${served.length} worker(s) exposed as MCP tools: ` +
+      `${served.map((s) => s.slug).join(", ")}\n`,
+  );
+  // Serve until the host closes the pipe.
+  await new Promise<void>((resolveClosed) => {
+    server.onclose = () => resolveClosed();
+  });
+  return 0;
+}
+
+/**
+ * Wire the full LOCAL tool surface for one .agent file: reminders, connector
+ * executors, first-party core tools, webhook refs, self-skilling + brain, and
+ * the portable manager (sub-agent dispatch over the sibling folder).
+ *
+ * Shared by `agentmug run` and `agentmug serve-mcp` so the MCP surface can
+ * never drift from what a direct run would do.
+ */
+function buildLocalToolRegistry(opts: {
+  agentFile: AgentFileV1;
+  agentPath: string;
+  remindersFile: string;
+  llm: ReturnType<typeof createMultiLlmClientFromEnv>;
+  tracing: TracingAdapter;
+  sourceBindingStore: CliSourceBindingStore;
+  sourceRuntime: Awaited<ReturnType<typeof prepareCliSources>>;
+}): InMemoryToolRegistry {
+  const registry = new InMemoryToolRegistry();
+  if (opts.agentFile.blueprint.tools.includes("create_reminder")) {
+    const sink = new IcsFileRemindersAdapter(opts.remindersFile);
+    registry.register(
+      createReminderDefinition,
+      new CliCreateReminderExecutor(sink),
+    );
+  }
+
+  // Connector executors — registered when the agent declares them. Each reads
+  // its credentials from environment variables (TWILIO_*, TELEGRAM_*,
+  // DISCORD_WEBHOOK_URL, SLACK_BOT_TOKEN) and throws a clear "set X env var"
+  // message at run time if unconfigured, mirroring the cloud executors. This
+  // is the tri-runtime parity: `agentmug run` now actually SENDS, not just
+  // describes.
+  const t = opts.agentFile.blueprint.tools;
+  if (t.includes("twilio.send_sms"))
+    registry.register(twilioSendSmsDefinition, new CliTwilioSendSmsExecutor());
+  if (t.includes("twilio.send_whatsapp"))
+    registry.register(
+      twilioSendWhatsappDefinition,
+      new CliTwilioSendWhatsappExecutor(),
+    );
+  if (t.includes("telegram.send_message"))
+    registry.register(
+      telegramSendMessageDefinition,
+      new CliTelegramSendMessageExecutor(),
+    );
+  if (t.includes("discord.send_message"))
+    registry.register(
+      discordSendMessageDefinition,
+      new CliDiscordSendMessageExecutor(),
+    );
+  if (t.includes("slack.send_message"))
+    registry.register(
+      slackSendMessageDefinition,
+      new CliSlackSendMessageExecutor(),
+    );
+
+  // First-party core tools (fetch_url, web.fetch_json, query_csv) — registered
+  // straight from the runtime for any the agent declares, so a portable .agent
+  // that fetches a URL, calls a JSON API, or reads a CSV runs here too instead
+  // of dead-ending at "Unknown tool". No env/credentials needed.
+  registerCoreToolsFor(registry, Array.isArray(t) ? (t as string[]) : []);
+  if (t.includes(capabilityExecuteDefinition.name)) {
+    // Portable source travels, authority does not. CLI intentionally registers
+    // the fail-closed executor until a future local verifier + sandbox mints a
+    // trusted digest for this machine.
+    registerCapabilityExecutionTool(registry, {
+      capabilityCapsules: getCapabilityCapsules(opts.agentFile),
+    });
+  }
+
+  // Webhook tools (blueprint refs) — portable HTTP executor, same as cloud.
+  registerWebhookTools(registry, normalizeTools(opts.agentFile));
+
+  // Verified Self-Skilling + Agent Brain — persist into the .agent FILE so the
+  // agent genuinely learns + remembers LOCALLY (no cloud), exactly like the
+  // cloud loop. The store reads/writes args.agentPath; save_skill verifies via
+  // the same LLM judge before keeping. Registered only for declared tools.
+  const agentStore = new FileAgentFileStore(opts.agentPath);
+  const verifySkill = createLlmSkillVerifier(opts.llm);
+  if (t.includes("save_skill"))
+    registry.register(
+      saveSkillDefinition,
+      new SaveSkillExecutor(agentStore, verifySkill),
+    );
+  if (t.includes("use_skill"))
+    registry.register(useSkillDefinition, new UseSkillExecutor(agentStore));
+  if (t.includes("brain_remember"))
+    registry.register(
+      brainRememberDefinition,
+      new BrainRememberExecutor(agentStore),
+    );
+  if (t.includes("brain_lookup"))
+    registry.register(
+      brainLookupDefinition,
+      new BrainLookupExecutor(agentStore),
+    );
+
+  // Portable Manager — list_agents / create_agent / update_agent / invoke_agent
+  // over the FOLDER of .agent files beside this one. A Conductor can discover,
+  // spawn, repair, and dispatch its fleet locally, no server. invoke_agent runs
+  // a sibling agent through runAgent recursively (core tools + connectors,
+  // recursion-depth-guarded).
+  const folder = new FileAgentFolderStore(opts.agentPath);
+  const toolNameList = normalizeTools(opts.agentFile).map((x) => x.name);
+  registerPortableManagerTools(registry, {
+    store: folder,
+    tools: toolNameList,
+    runSubAgent: async ({ file, path, input, parentContext }) => {
+      const subRegistry = new InMemoryToolRegistry();
+      const subTools = normalizeTools(file).map((x) => x.name);
+      registerCoreToolsFor(subRegistry, subTools);
+      if (subTools.includes(capabilityExecuteDefinition.name)) {
+        registerCapabilityExecutionTool(subRegistry, {
+          capabilityCapsules: getCapabilityCapsules(file),
+        });
+      }
+      if (subTools.includes("twilio.send_sms"))
+        subRegistry.register(
+          twilioSendSmsDefinition,
+          new CliTwilioSendSmsExecutor(),
+        );
+      if (subTools.includes("twilio.send_whatsapp"))
+        subRegistry.register(
+          twilioSendWhatsappDefinition,
+          new CliTwilioSendWhatsappExecutor(),
+        );
+      if (subTools.includes("telegram.send_message"))
+        subRegistry.register(
+          telegramSendMessageDefinition,
+          new CliTelegramSendMessageExecutor(),
+        );
+      if (subTools.includes("discord.send_message"))
+        subRegistry.register(
+          discordSendMessageDefinition,
+          new CliDiscordSendMessageExecutor(),
+        );
+      if (subTools.includes("slack.send_message"))
+        subRegistry.register(
+          slackSendMessageDefinition,
+          new CliSlackSendMessageExecutor(),
+        );
+      // A dispatched worker uses — and writes back to — its OWN brain + skills,
+      // read from its own .agent file, exactly like a top-level run. Only a real
+      // file path enables that; an in-memory locator stays brain-blind so we never
+      // advertise a brain_lookup the sub-registry hasn't wired.
+      const workerPath = path && !path.startsWith("mem://") ? path : null;
+      const workerSources = workerPath
+        ? await prepareCliSources(workerPath, file, {
+            store: opts.sourceBindingStore,
+            adapter: opts.sourceRuntime.adapter,
+          })
+        : null;
+      if (workerSources && !workerSources.ready) {
+        throw new Error(
+          `Worker '${file.name}' source requirements are not ready: ` +
+            sourceReadinessErrorLines(file, workerSources)
+              .map((line) => line.trim())
+              .join(" "),
+        );
+      }
+      if (workerPath) {
+        const workerStore = new FileAgentFileStore(workerPath);
+        const verifyWorkerSkill = createLlmSkillVerifier(opts.llm);
+        if (subTools.includes("save_skill"))
+          subRegistry.register(
+            saveSkillDefinition,
+            new SaveSkillExecutor(workerStore, verifyWorkerSkill),
+          );
+        if (subTools.includes("use_skill"))
+          subRegistry.register(
+            useSkillDefinition,
+            new UseSkillExecutor(workerStore),
+          );
+        if (subTools.includes("brain_remember"))
+          subRegistry.register(
+            brainRememberDefinition,
+            new BrainRememberExecutor(workerStore),
+          );
+        if (subTools.includes("brain_lookup"))
+          subRegistry.register(
+            brainLookupDefinition,
+            new BrainLookupExecutor(workerStore),
+          );
+      }
+      const sub = await runAgent({
+        agentId: file.id,
+        userId: "cli-local",
+        userInput: input,
+        adapters: {
+          persistence: new FileAgentPersistence(file),
+          tracing: opts.tracing,
+          llm: opts.llm,
+          credentialResolver: new EnvCredentialResolver(),
+          ...((file.sources?.length || file.evaluation?.checks.length) &&
+          workerPath
+            ? {
+                receipts: new CliReceiptStore(workerPath, file.id, {
+                  agent: file,
+                  bindings: workerSources?.bindings ?? [],
+                }),
+              }
+            : {}),
+        },
+        tools: subRegistry,
+        sources: prepareSourceExecution({
+          requirements: file.sources ?? [],
+          bindings: workerSources?.bindings ?? [],
+          adapters: file.sources?.length ? [opts.sourceRuntime.adapter] : [],
+        }),
+        evaluation: file.evaluation,
+        recursionDepth: (parentContext.recursionDepth ?? 0) + 1,
+        memoryContext: workerPath ? buildBrainIndex(file.brain) : "",
+        // The CLI is an unattended runner (cron/CI, no human) — any approval-
+        // gated tool must fail closed here too, never block on a prompt nobody
+        // can answer. (No shell executor is wired today, so this is currently a
+        // no-op safeguard that keeps the CLI aligned with the desktop contract.)
+        unattended: true,
+        onEvent: () => {
+          /* sub-agent stream is summarized into the tool_result, not printed */
+        },
+      });
+      return {
+        status: sub.status === "completed" ? "completed" : "failed",
+        output: sub.output,
+        error: sub.status === "failed" ? sub.output : undefined,
+      };
+    },
+  });
+
+  return registry;
+}
+
 async function runCli(args: CliArgs): Promise<number> {
   if (args.command === "help") {
     process.stdout.write(`${HELP}\n`);
@@ -843,6 +1359,9 @@ async function runCli(args: CliArgs): Promise<number> {
   // Phase C: setup check — read-only, dispatched BEFORE the Anthropic-key
   // gate (checking what's missing must not itself require a key).
   if (args.command === "check") return checkAgent(args);
+  if (args.command === "validate") return validateAgentFileCommand(args);
+  if (args.command === "serve-mcp") return serveMcpCommand(args);
+  if (args.command === "push") return cloudPush(args);
 
   // Phase 28: dispatch cloud subcommands. Each hits the
   // /api/* surface with a user-level API key (am_user_...).
@@ -907,203 +1426,14 @@ async function runCli(args: CliArgs): Promise<number> {
   const tracing = new SilentTracing();
   const llm = createMultiLlmClientFromEnv(env);
 
-  const registry = new InMemoryToolRegistry();
-  if (agentFile.blueprint.tools.includes("create_reminder")) {
-    const sink = new IcsFileRemindersAdapter(args.remindersFile);
-    registry.register(
-      createReminderDefinition,
-      new CliCreateReminderExecutor(sink),
-    );
-  }
-
-  // Connector executors — registered when the agent declares them. Each reads
-  // its credentials from environment variables (TWILIO_*, TELEGRAM_*,
-  // DISCORD_WEBHOOK_URL, SLACK_BOT_TOKEN) and throws a clear "set X env var"
-  // message at run time if unconfigured, mirroring the cloud executors. This
-  // is the tri-runtime parity: `agentmug run` now actually SENDS, not just
-  // describes.
-  const t = agentFile.blueprint.tools;
-  if (t.includes("twilio.send_sms"))
-    registry.register(twilioSendSmsDefinition, new CliTwilioSendSmsExecutor());
-  if (t.includes("twilio.send_whatsapp"))
-    registry.register(
-      twilioSendWhatsappDefinition,
-      new CliTwilioSendWhatsappExecutor(),
-    );
-  if (t.includes("telegram.send_message"))
-    registry.register(
-      telegramSendMessageDefinition,
-      new CliTelegramSendMessageExecutor(),
-    );
-  if (t.includes("discord.send_message"))
-    registry.register(
-      discordSendMessageDefinition,
-      new CliDiscordSendMessageExecutor(),
-    );
-  if (t.includes("slack.send_message"))
-    registry.register(
-      slackSendMessageDefinition,
-      new CliSlackSendMessageExecutor(),
-    );
-
-  // First-party core tools (fetch_url, web.fetch_json, query_csv) — registered
-  // straight from the runtime for any the agent declares, so a portable .agent
-  // that fetches a URL, calls a JSON API, or reads a CSV runs here too instead
-  // of dead-ending at "Unknown tool". No env/credentials needed.
-  registerCoreToolsFor(registry, Array.isArray(t) ? (t as string[]) : []);
-
-  // Webhook tools (blueprint refs) — portable HTTP executor, same as cloud.
-  registerWebhookTools(registry, normalizeTools(agentFile));
-
-  // Verified Self-Skilling + Agent Brain — persist into the .agent FILE so the
-  // agent genuinely learns + remembers LOCALLY (no cloud), exactly like the
-  // cloud loop. The store reads/writes args.agentPath; save_skill verifies via
-  // the same LLM judge before keeping. Registered only for declared tools.
-  const agentStore = new FileAgentFileStore(args.agentPath!);
-  const verifySkill = createLlmSkillVerifier(llm);
-  if (t.includes("save_skill"))
-    registry.register(
-      saveSkillDefinition,
-      new SaveSkillExecutor(agentStore, verifySkill),
-    );
-  if (t.includes("use_skill"))
-    registry.register(useSkillDefinition, new UseSkillExecutor(agentStore));
-  if (t.includes("brain_remember"))
-    registry.register(
-      brainRememberDefinition,
-      new BrainRememberExecutor(agentStore),
-    );
-  if (t.includes("brain_lookup"))
-    registry.register(
-      brainLookupDefinition,
-      new BrainLookupExecutor(agentStore),
-    );
-
-  // Portable Manager — list_agents / create_agent / update_agent / invoke_agent
-  // over the FOLDER of .agent files beside this one. A Conductor can discover,
-  // spawn, repair, and dispatch its fleet locally, no server. invoke_agent runs
-  // a sibling agent through runAgent recursively (core tools + connectors,
-  // recursion-depth-guarded).
-  const folder = new FileAgentFolderStore(args.agentPath!);
-  const toolNameList = normalizeTools(agentFile).map((x) => x.name);
-  registerPortableManagerTools(registry, {
-    store: folder,
-    tools: toolNameList,
-    runSubAgent: async ({ file, path, input, parentContext }) => {
-      const subRegistry = new InMemoryToolRegistry();
-      const subTools = normalizeTools(file).map((x) => x.name);
-      registerCoreToolsFor(subRegistry, subTools);
-      if (subTools.includes("twilio.send_sms"))
-        subRegistry.register(
-          twilioSendSmsDefinition,
-          new CliTwilioSendSmsExecutor(),
-        );
-      if (subTools.includes("twilio.send_whatsapp"))
-        subRegistry.register(
-          twilioSendWhatsappDefinition,
-          new CliTwilioSendWhatsappExecutor(),
-        );
-      if (subTools.includes("telegram.send_message"))
-        subRegistry.register(
-          telegramSendMessageDefinition,
-          new CliTelegramSendMessageExecutor(),
-        );
-      if (subTools.includes("discord.send_message"))
-        subRegistry.register(
-          discordSendMessageDefinition,
-          new CliDiscordSendMessageExecutor(),
-        );
-      if (subTools.includes("slack.send_message"))
-        subRegistry.register(
-          slackSendMessageDefinition,
-          new CliSlackSendMessageExecutor(),
-        );
-      // A dispatched worker uses — and writes back to — its OWN brain + skills,
-      // read from its own .agent file, exactly like a top-level run. Only a real
-      // file path enables that; an in-memory locator stays brain-blind so we never
-      // advertise a brain_lookup the sub-registry hasn't wired.
-      const workerPath = path && !path.startsWith("mem://") ? path : null;
-      const workerSources = workerPath
-        ? await prepareCliSources(workerPath, file, {
-            store: sourceBindingStore,
-            adapter: sourceRuntime.adapter,
-          })
-        : null;
-      if (workerSources && !workerSources.ready) {
-        throw new Error(
-          `Worker '${file.name}' source requirements are not ready: ` +
-            sourceReadinessErrorLines(file, workerSources)
-              .map((line) => line.trim())
-              .join(" "),
-        );
-      }
-      if (workerPath) {
-        const workerStore = new FileAgentFileStore(workerPath);
-        const verifyWorkerSkill = createLlmSkillVerifier(llm);
-        if (subTools.includes("save_skill"))
-          subRegistry.register(
-            saveSkillDefinition,
-            new SaveSkillExecutor(workerStore, verifyWorkerSkill),
-          );
-        if (subTools.includes("use_skill"))
-          subRegistry.register(
-            useSkillDefinition,
-            new UseSkillExecutor(workerStore),
-          );
-        if (subTools.includes("brain_remember"))
-          subRegistry.register(
-            brainRememberDefinition,
-            new BrainRememberExecutor(workerStore),
-          );
-        if (subTools.includes("brain_lookup"))
-          subRegistry.register(
-            brainLookupDefinition,
-            new BrainLookupExecutor(workerStore),
-          );
-      }
-      const sub = await runAgent({
-        agentId: file.id,
-        userId: "cli-local",
-        userInput: input,
-        adapters: {
-          persistence: new FileAgentPersistence(file),
-          tracing,
-          llm,
-          credentialResolver: new EnvCredentialResolver(),
-          ...((file.sources?.length || file.evaluation?.checks.length) &&
-          workerPath
-            ? {
-                receipts: new CliReceiptStore(workerPath, file.id, {
-                  agent: file,
-                  bindings: workerSources?.bindings ?? [],
-                }),
-              }
-            : {}),
-        },
-        tools: subRegistry,
-        sources: prepareSourceExecution({
-          requirements: file.sources ?? [],
-          bindings: workerSources?.bindings ?? [],
-          adapters: file.sources?.length ? [sourceRuntime.adapter] : [],
-        }),
-        evaluation: file.evaluation,
-        recursionDepth: (parentContext.recursionDepth ?? 0) + 1,
-        memoryContext: workerPath ? buildBrainIndex(file.brain) : "",
-        // The CLI is an unattended runner (cron/CI, no human) — any approval-
-        // gated tool must fail closed here too, never block on a prompt nobody
-        // can answer. (No shell executor is wired today, so this is currently a
-        // no-op safeguard that keeps the CLI aligned with the desktop contract.)
-        unattended: true,
-        onEvent: () => {
-          /* sub-agent stream is summarized into the tool_result, not printed */
-        },
-      });
-      return {
-        status: sub.status === "completed" ? "completed" : "failed",
-        output: sub.output,
-        error: sub.status === "failed" ? sub.output : undefined,
-      };
-    },
+  const registry = buildLocalToolRegistry({
+    agentFile,
+    agentPath: args.agentPath!,
+    remindersFile: args.remindersFile,
+    llm,
+    tracing,
+    sourceBindingStore,
+    sourceRuntime,
   });
 
   // Heads up — surface the builder's caveats (how the agent adapts the request)
@@ -1283,6 +1613,242 @@ type AgentRow = {
   createdAt?: string;
 };
 
+type CapabilityMatrixFile = {
+  tools: Array<{
+    id: string;
+    provider: string | null;
+    requiresConnection: boolean;
+    cloud: { available: boolean; note?: string };
+    runtimeCore: { available: boolean };
+  }>;
+};
+
+/**
+ * The generated tools × surface × auth matrix that ships inside
+ * @agentmug/runtime. Resolution can fail on exotic installs (e.g. a bundler
+ * that stripped package JSON subpaths) — validation then degrades to
+ * structural-only with a visible note, never a hard failure.
+ */
+async function loadCapabilityMatrix(): Promise<CapabilityMatrixFile | null> {
+  try {
+    const { createRequire } = await import("node:module");
+    const requireFromHere = createRequire(import.meta.url);
+    return requireFromHere(
+      "@agentmug/runtime/capabilities/agent-capabilities.v1.json",
+    ) as CapabilityMatrixFile;
+  } catch {
+    return null;
+  }
+}
+
+/** Shared by validate + push: read, JSON-parse, and format-parse a local
+ *  .agent file, writing a specific reason to stderr on each failure tier. */
+async function readLocalAgentFile(
+  path: string,
+): Promise<{ file: AgentFileV1 } | { exit: number }> {
+  let raw: string;
+  try {
+    raw = await readFile(resolvePath(path), "utf8");
+  } catch (err) {
+    process.stderr.write(
+      `Cannot read ${path}: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    return { exit: 1 };
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch (err) {
+    process.stderr.write(
+      `${path} is not valid JSON: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    return { exit: 1 };
+  }
+  try {
+    return { file: parseAgentFile(json) };
+  } catch (err) {
+    process.stderr.write(
+      `Invalid .agent file: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+    return { exit: 1 };
+  }
+}
+
+async function validateAgentFileCommand(args: CliArgs): Promise<number> {
+  const path = args.positional;
+  if (!path) {
+    process.stderr.write(
+      "Usage: agentmug validate <path-to-.agent> [--strict]\n",
+    );
+    return 2;
+  }
+  const loaded = await readLocalAgentFile(path);
+  if ("exit" in loaded) return loaded.exit;
+  const file = loaded.file;
+
+  const warnings: string[] = [];
+  const capabilityCapsules = getCapabilityCapsules(file);
+  if (capabilityCapsules.length > 0) {
+    warnings.push(
+      `${capabilityCapsules.length} executable capability capsule(s) are quarantined; this CLI will not run them until this machine independently re-verifies their digests and configures an isolated no-network sandbox`,
+    );
+  }
+  const matrix = await loadCapabilityMatrix();
+  if (matrix) {
+    const byId = new Map(matrix.tools.map((tool) => [tool.id, tool]));
+    for (const tool of normalizeTools(file)) {
+      // Only builtin ids must exist in the matrix — mcp/webhook/nango refs
+      // carry their own routing and are host-extensible by design.
+      if (tool.kind !== "builtin") continue;
+      const row = byId.get(tool.name);
+      if (!row) {
+        warnings.push(
+          `tool '${tool.name}' is not in the capability matrix — it will import but stay inert until an operator adds it`,
+        );
+      } else if (!row.cloud.available && !row.runtimeCore.available) {
+        warnings.push(
+          `tool '${tool.name}': ${row.cloud.note ?? "not executable on the cloud or runtime-core surfaces"}`,
+        );
+      }
+    }
+  } else {
+    process.stderr.write(
+      "note: capability matrix unavailable — structural validation only\n",
+    );
+  }
+
+  const credentials = getRequiredCredentials(file);
+  if (args.json) {
+    process.stdout.write(
+      JSON.stringify(
+        {
+          valid: true,
+          name: file.name,
+          version: file.version,
+          tools: normalizeTools(file).map((tool) => tool.name),
+          connections: credentials.map((credential) => credential.provider),
+          warnings,
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  } else {
+    process.stdout.write(
+      `✓ ${path} is a valid .agent file — "${file.name}" v${file.version}, ` +
+        `${file.blueprint.tools.length} tool(s)\n`,
+    );
+    if (credentials.length) {
+      process.stdout.write(
+        `  connections needed at run time: ${credentials.map((credential) => credential.label).join(", ")}\n`,
+      );
+    }
+    for (const warning of warnings) process.stdout.write(`  ⚠ ${warning}\n`);
+  }
+  if (warnings.length && args.flags.strict === true) return 2;
+  return 0;
+}
+
+async function cloudPush(args: CliArgs): Promise<number> {
+  const path = args.positional;
+  if (!path) {
+    process.stderr.write(
+      "Usage: agentmug push <path-to-.agent> [--preview-only] [--confirm-private-knowledge]\n",
+    );
+    return 2;
+  }
+  // Fail fast locally with the parser's specific reason before any network
+  // round-trip — same validator the server runs.
+  const loaded = await readLocalAgentFile(path);
+  if ("exit" in loaded) return loaded.exit;
+  const file = loaded.file;
+
+  const config = loadConfig();
+  const preview = await apiRequest<{
+    name: string;
+    tools: string[];
+    credentials: Array<{ provider: string; label: string }>;
+    sourcesNeedRebind: number;
+    schedules: number;
+    includesPrivateBrain: boolean;
+    skillsRequireReverification: boolean;
+    executableCapsulesQuarantined: number;
+  }>(config, "POST", "/api/agents/import/preview", { json: file });
+
+  if (!args.json) {
+    process.stdout.write(
+      `Import preview for "${preview.name}":\n` +
+        `  tools: ${preview.tools.length ? preview.tools.join(", ") : "(none)"}\n`,
+    );
+    if (preview.credentials?.length) {
+      process.stdout.write(
+        `  connections to supply after import: ${preview.credentials.map((credential) => credential.label ?? credential.provider).join(", ")}\n`,
+      );
+    }
+    if (preview.sourcesNeedRebind > 0) {
+      process.stdout.write(
+        `  sources to rebind with your own files/accounts: ${preview.sourcesNeedRebind}\n`,
+      );
+    }
+    if (preview.schedules > 0) {
+      process.stdout.write(
+        `  schedules (imported disabled until you enable them): ${preview.schedules}\n`,
+      );
+    }
+    if (preview.includesPrivateBrain) {
+      process.stdout.write(
+        "  ⚠ file carries private brain/memory — pass --confirm-private-knowledge to activate it\n",
+      );
+    }
+    if (preview.skillsRequireReverification) {
+      process.stdout.write(
+        "  imported skills are quarantined until this runtime re-verifies them\n",
+      );
+    }
+    if (preview.executableCapsulesQuarantined > 0) {
+      process.stdout.write(
+        `  ${preview.executableCapsulesQuarantined} executable capsule(s) will stay quarantined; import keeps the recipes but discards code until it is rebuilt and verified here\n`,
+      );
+    }
+  }
+  if (args.flags["preview-only"] === true) {
+    if (args.json)
+      process.stdout.write(JSON.stringify(preview, null, 2) + "\n");
+    return 0;
+  }
+
+  const result = await apiRequest<{
+    id: string;
+    name: string;
+    sourcesNeedRebind?: number;
+    importedSchedules?: unknown[];
+    skippedSchedules?: unknown[];
+  }>(config, "POST", "/api/agents/import", {
+    json: file,
+    confirmPrivateKnowledge: args.flags["confirm-private-knowledge"] === true,
+  });
+
+  if (args.json) {
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+  } else {
+    process.stdout.write(
+      `Imported "${result.name}" (id: ${result.id})\n` +
+        `  ${config.host}/agents/${result.id}\n`,
+    );
+    if (result.importedSchedules?.length) {
+      process.stdout.write(
+        `  ${result.importedSchedules.length} schedule(s) imported DISABLED — enable them on the web to start firing\n`,
+      );
+    }
+    if (result.skippedSchedules?.length) {
+      process.stdout.write(
+        `  ⚠ ${result.skippedSchedules.length} schedule(s) skipped (invalid cron or over the cap)\n`,
+      );
+    }
+  }
+  return 0;
+}
+
 async function cloudCreate(args: CliArgs): Promise<number> {
   const prompt = typeof args.flags.prompt === "string" ? args.flags.prompt : "";
   if (!prompt) {
@@ -1291,10 +1857,37 @@ async function cloudCreate(args: CliArgs): Promise<number> {
     );
     return 2;
   }
+  const providedIdempotencyKey =
+    typeof args.flags["idempotency-key"] === "string"
+      ? args.flags["idempotency-key"].trim()
+      : "";
+  if (providedIdempotencyKey.length > 200) {
+    process.stderr.write(
+      "--idempotency-key must be 200 characters or fewer.\n",
+    );
+    return 2;
+  }
+  // A single CLI invocation gets one stable request identity. Network retries can
+  // safely reuse an explicit key; the generated key prevents accidental duplicate
+  // work inside this invocation without making separate invocations collide.
+  const idempotencyKey = providedIdempotencyKey || `cli-create-${randomUUID()}`;
   const config = loadConfig();
   // POST /api/agents with { prompt } triggers Claude blueprint
   // generation server-side, just like the web wizard does.
-  const result = await apiRequest<AgentRow & { warning?: string }>(
+  const submitted = await apiRequest<
+    | (AgentRow & { warning?: string })
+    | {
+        durable: true;
+        creationSessionId: string;
+        statusUrl: string;
+        generation: {
+          status: string;
+          stage?: string | null;
+          error?: string | null;
+          createdAgentId?: string | null;
+        };
+      }
+  >(
     config,
     "POST",
     "/api/agents",
@@ -1302,7 +1895,53 @@ async function cloudCreate(args: CliArgs): Promise<number> {
       prompt,
       name: typeof args.flags.name === "string" ? args.flags.name : undefined,
     },
+    { headers: { "Idempotency-Key": idempotencyKey } },
   );
+  let result: AgentRow & { warning?: string };
+  if ("durable" in submitted && submitted.durable === true) {
+    if (!args.quiet && !args.json) {
+      process.stderr.write(
+        `Worker preparation saved (${submitted.creationSessionId}); it keeps running if this terminal disconnects.\n`,
+      );
+    }
+    const deadline = Date.now() + 30 * 60_000;
+    let generation = submitted.generation;
+    for (;;) {
+      if (generation.status === "completed" && generation.createdAgentId) {
+        result = await apiRequest<AgentRow & { warning?: string }>(
+          config,
+          "GET",
+          `/api/agents/${encodeURIComponent(generation.createdAgentId)}`,
+        );
+        break;
+      }
+      if (generation.status === "needs_review") {
+        throw new Error(
+          `The design needs review before it can create a worker. Resume it at ${config.host}/agents/new?resume=${encodeURIComponent(submitted.creationSessionId)}`,
+        );
+      }
+      if (generation.status === "failed" || generation.status === "cancelled") {
+        throw new Error(
+          generation.error ||
+            "Durable worker preparation stopped safely; no worker was created.",
+        );
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Worker preparation is still safe on the server. Resume it at ${config.host}/agents/new?resume=${encodeURIComponent(submitted.creationSessionId)}`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      const observed = await apiRequest<{ generation: typeof generation }>(
+        config,
+        "GET",
+        submitted.statusUrl,
+      );
+      generation = observed.generation;
+    }
+  } else {
+    result = submitted as AgentRow & { warning?: string };
+  }
   if (args.json) {
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
   } else {

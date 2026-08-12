@@ -2,10 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AGENT_FILE_SCHEMA_V1,
+  AGENT_FILE_SCHEMA_V2,
   checkArtifactCompatibility,
+  getCapabilityCapsules,
   parseAgentFile,
+  parseAgentFileV1,
   type AgentFileV1,
 } from "./agent-file";
+import {
+  EXECUTABLE_CAPABILITY_KIND,
+  EXECUTABLE_CAPABILITY_POLICY,
+  executableCapabilitySha256,
+  type UnsignedAgentExecutableCapabilityV1,
+} from "../capabilities/executable-capability";
 
 function fileWithParameter(): AgentFileV1 {
   return {
@@ -213,6 +222,150 @@ test("preserves a redacted task-proof attestation without private fixture eviden
   );
   assert.equal(JSON.stringify(parsed).includes("taskFingerprint"), false);
   assert.equal(JSON.stringify(parsed).includes("expectedOutput"), false);
+});
+
+test("v2 preserves a digest-pinned capsule while v1 remains code-free", async () => {
+  const unsigned: UnsignedAgentExecutableCapabilityV1 = {
+    version: 1,
+    kind: EXECUTABLE_CAPABILITY_KIND,
+    language: "python",
+    entrypoint: "run",
+    policy: EXECUTABLE_CAPABILITY_POLICY,
+    source:
+      "def run(payload):\n    return {'total': payload['quantity'] * payload['price']}",
+    contract: {
+      inputSchema: {
+        type: "object",
+        properties: {
+          quantity: { type: "number" },
+          price: { type: "number" },
+        },
+        required: ["quantity", "price"],
+      },
+      outputSchema: {
+        type: "object",
+        properties: { total: { type: "number" } },
+        required: ["total"],
+      },
+    },
+    permissions: {
+      network: false,
+      secrets: [],
+      filesystemWrites: false,
+    },
+  };
+  const digest = await executableCapabilitySha256(unsigned);
+  const value = fileWithParameter();
+  const proof = {
+    version: 2 as const,
+    receiptId: "proof-receipt-reuse-123",
+    status: "passed" as const,
+    capabilityKind: "portable_python_skill_v1",
+    harnessId: "portable-python-v2",
+    sandboxId: "e2b-code-interpreter",
+    contractMatched: true as const,
+    criteriaPassed: 2,
+    criteriaTotal: 2,
+    judgeId: "independent-task-proof-v1",
+    judgeModel: "claude-sonnet-4-6",
+    verifiedAt: "2026-08-09T00:00:00.000Z",
+    artifactDigest: digest,
+    reusableInputVerified: true as const,
+  };
+  value.blueprint.tools = ["capability.execute"];
+  value.blueprint.skills = [
+    {
+      name: "invoice_total",
+      trigger: "when the user asks to total an invoice line",
+      recipe:
+        "Call capability.execute with invoice_total and the current quantity and price.",
+      verified: true,
+      proof,
+    },
+  ];
+
+  const parsed = parseAgentFile(
+    JSON.parse(
+      JSON.stringify({
+        ...value,
+        $schema: AGENT_FILE_SCHEMA_V2,
+        capabilityCapsules: [
+          {
+            version: 1,
+            name: "invoice_total",
+            proof,
+            artifact: { ...unsigned, digest },
+          },
+        ],
+      }),
+    ) as unknown,
+  );
+  assert.equal(getCapabilityCapsules(parsed)[0]?.artifact.digest, digest);
+  assert.equal("executable" in parsed.blueprint.skills![0]!, false);
+  assert.throws(() => parseAgentFileV1(parsed), /accepts agent\.v1 only/);
+  assert.equal(JSON.stringify(parsed).includes("sampleInput"), false);
+  assert.equal(JSON.stringify(parsed).includes('quantity":2'), false);
+});
+
+test("v1 rejects executable content even when hidden under a forward-compatible skill", async () => {
+  const unsigned: UnsignedAgentExecutableCapabilityV1 = {
+    version: 1,
+    kind: EXECUTABLE_CAPABILITY_KIND,
+    language: "python",
+    entrypoint: "run",
+    policy: EXECUTABLE_CAPABILITY_POLICY,
+    source: "def run(payload):\n    return payload",
+    contract: { inputSchema: {}, outputSchema: {} },
+    permissions: { network: false, secrets: [], filesystemWrites: false },
+  };
+  const digest = await executableCapabilitySha256(unsigned);
+  const value: any = fileWithParameter();
+  value.blueprint.skills = [
+    {
+      name: "unsafe_import",
+      trigger: "always",
+      recipe: "Run it.",
+      verified: true,
+      executable: { ...unsigned, digest },
+    },
+  ];
+  assert.throws(
+    () => parseAgentFile(value),
+    /cannot contain executable content/,
+  );
+});
+
+test("v2 capsule cannot self-authorize without reusable proof", async () => {
+  const unsigned: UnsignedAgentExecutableCapabilityV1 = {
+    version: 1,
+    kind: EXECUTABLE_CAPABILITY_KIND,
+    language: "python",
+    entrypoint: "run",
+    policy: EXECUTABLE_CAPABILITY_POLICY,
+    source: "def run(payload):\n    return payload",
+    contract: { inputSchema: {}, outputSchema: {} },
+    permissions: { network: false, secrets: [], filesystemWrites: false },
+  };
+  const digest = await executableCapabilitySha256(unsigned);
+  const value: any = fileWithParameter();
+  value.$schema = AGENT_FILE_SCHEMA_V2;
+  value.blueprint.tools = ["capability.execute"];
+  value.blueprint.skills = [
+    {
+      name: "unsafe_import",
+      trigger: "always",
+      recipe: "Run it.",
+      verified: true,
+    },
+  ];
+  value.capabilityCapsules = [
+    {
+      version: 1,
+      name: "unsafe_import",
+      artifact: { ...unsigned, digest },
+    },
+  ];
+  assert.throws(() => parseAgentFile(value), /invalid proof or artifact/);
 });
 
 test("rejects malformed or incomplete task-proof attestations", () => {

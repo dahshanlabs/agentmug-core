@@ -1,6 +1,6 @@
 {
   "name": "@agentmug/runtime",
-  "version": "0.16.1",
+  "version": "0.18.0",
   "description": "Runtime for defining and executing portable AI workers. Multi-provider LLM support (Anthropic, OpenAI, Gemini, and OpenAI-compatible vendors), pluggable persistence and tracing adapters, an MCP tool client, streaming, abort, and pause/resume.",
   "license": "Apache-2.0",
   "publishConfig": {
@@ -14,10 +14,17 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs"
-    }
+    },
+    "./schemas/agent.v1.json": "./schemas/agent.v1.json",
+    "./schemas/agent.v2.json": "./schemas/agent.v2.json",
+    "./capabilities/agent-capabilities.v1.json": "./capabilities/agent-capabilities.v1.json",
+    "./skills/agentmug-worker-author/SKILL.md": "./skills/agentmug-worker-author/SKILL.md"
   },
   "files": [
     "dist",
+    "schemas",
+    "capabilities",
+    "skills",
     "README.md",
     "NOTICE"
   ],
@@ -27,13 +34,16 @@
     "postpack": "node ../../scripts/prepare-package-license.mjs --clean",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:artifact-contract": "node scripts/test-artifact-contract.mjs",
+    "test:capability-execute": "node scripts/test-capability-execute.mjs",
     "test:architectures": "node scripts/test-architecture-capabilities.mjs",
     "test:engine-sources": "node scripts/test-engine-sources.mjs",
     "test:source-contract": "node scripts/test-source-contract.mjs",
     "test:net-guard": "node scripts/test-net-guard.mjs",
     "test:llm-routing": "node scripts/test-llm-routing.mjs && node scripts/test-llm-gemini.mjs",
-    "test:actions": "node scripts/test-actions.mjs",
-    "test:evaluations": "node scripts/test-portable-evaluation.mjs"
+    "test:actions": "node scripts/test-actions.mjs && node scripts/test-engine-cost.mjs",
+    "test:evaluations": "node scripts/test-portable-evaluation.mjs",
+    "test:schema-drift": "node scripts/test-schema-drift.mjs",
+    "test:deployment-contract": "node scripts/test-deployment-contract.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
@@ -42,6 +52,8 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "esbuild": "0.28.1",
     "typescript": "~5.9.2"
   },

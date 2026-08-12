@@ -16,6 +16,11 @@ onlyBuiltDependencies:
   - esbuild
 
 overrides:
+  # Security floors. Same convention as the private root workspace: pin the
+  # transitive edge, never the top-level dependency, so raising a floor cannot
+  # force a full re-resolution of the tree.
+  "@changesets/parse>js-yaml": "4.3.1"
+  "read-yaml-file>js-yaml": "3.15.1"
   "@modelcontextprotocol/sdk>@hono/node-server": "2.0.10"
   "@modelcontextprotocol/sdk>hono": "4.12.34"
   "@google/genai>protobufjs": "7.6.5"

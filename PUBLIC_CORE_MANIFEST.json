@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "repository": "dahshanlabs/agentmug-core",
   "source": {
-    "commitSha": "b55e1d1ebe886878a83b0e1a4f0bb9e4e0971869"
+    "commitSha": "ba8e1c84b5bc20db040ac39d707249985a41d829"
   },
   "files": [
     {
@@ -192,18 +192,28 @@
     },
     {
       "path": "integrations/n8n-nodes-agentmug/package-lock.json",
-      "sha256": "597f06a98846be612faf0e45aef1a7f0b212a1b297ea533500bee77f40a96ae5",
-      "size": 309239
+      "sha256": "0411fdaee00a61ad16444a62e3e6e1057c8bd166a07b32aae433116757aa2692",
+      "size": 287401
     },
     {
       "path": "integrations/n8n-nodes-agentmug/package.json",
-      "sha256": "8b1e112c7a3dd44d6d6a503e2cf22ac0a46224114c110f403e4bada436b1ecb7",
-      "size": 1612
+      "sha256": "820cca4653e097181042686a363b6a0796fcaa2c33d9fba2722202c3f7ff65fb",
+      "size": 1778
     },
     {
       "path": "integrations/n8n-nodes-agentmug/README.md",
-      "sha256": "d508e4831ef5e4052c846ea110b35ad987318a0b99974860b4569bc1e4776ed2",
-      "size": 5728
+      "sha256": "7019c5402b0ed6bfbb9f7c77dfa5f7355225434bc976c4dddae21563ca32a730",
+      "size": 6669
+    },
+    {
+      "path": "integrations/n8n-nodes-agentmug/scripts/dependency-security.test.mjs",
+      "sha256": "5e456c4618e906860e4ccf5fcd0708d8d5627e9e9ba64d875b20b6076b5ab1ab",
+      "size": 1979
+    },
+    {
+      "path": "integrations/n8n-nodes-agentmug/scripts/upstream-dev-tooling-risk.test.mjs",
+      "sha256": "9104aa781a481ae144d5a39e3f1b1d33b3e36fd91de3bd855f1b132c29650a48",
+      "size": 1429
     },
     {
       "path": "integrations/n8n-nodes-agentmug/test/AgentMug.node.test.mjs",
@@ -267,8 +277,8 @@
     },
     {
       "path": "package.json",
-      "sha256": "d4edb658163151982c477ed697784857a6da32e22e394c519453bc3ed2787f85",
-      "size": 2877
+      "sha256": "69167e9e4d05c5d310f6976ca1106c2a282e24f81e1390d00243e2f2b69013d1",
+      "size": 2988
     },
     {
       "path": "packages/cli/.gitignore",
@@ -282,18 +292,18 @@
     },
     {
       "path": "packages/cli/CHANGELOG.md",
-      "sha256": "299a3204439a4193568c1cd9173fa833e2a7c853f98374509b5a32ee039a7066",
-      "size": 1393
+      "sha256": "34d1fa116cec1581a402b73f247545f1a7645d06716e4be999f5eac668fd19fd",
+      "size": 2676
     },
     {
       "path": "packages/cli/package.json",
-      "sha256": "d78e7a10e4328763d27f5250c423f0ba919a3a926a4694120e58f3dacc0f7721",
-      "size": 1492
+      "sha256": "f971f7349131e33e6ea62ca38f27e7fd0d9e0dfa776dab6e410e58582d26d746",
+      "size": 1536
     },
     {
       "path": "packages/cli/README.md",
-      "sha256": "17e80b73637f2514109ebf0b93904a993dd9a37b4d3a36a04953cd3eb71e13f9",
-      "size": 8434
+      "sha256": "f26ae1f5dba18bc155796b3f7e65d83396fc5c57fdad7aca00cd3e2d257523e4",
+      "size": 9340
     },
     {
       "path": "packages/cli/src/agent-file-store.ts",
@@ -312,8 +322,8 @@
     },
     {
       "path": "packages/cli/src/index.ts",
-      "sha256": "d39568cc5bb12e43078443c92d0bdc5cacfcc39f3c6a33708f5449c186fbff91",
-      "size": 56356
+      "sha256": "d7ab65241e62e9e4d9f1f4c2b10623d4077fae622fe9086a11d16d4ecb742e9d",
+      "size": 79577
     },
     {
       "path": "packages/cli/src/klypix-safety.ts",
@@ -322,8 +332,8 @@
     },
     {
       "path": "packages/cli/src/lib/api-client.ts",
-      "sha256": "e2989a94a2d56167617c9f6da6a4d0d7f0c773971e36d8b385749420bc5046f9",
-      "size": 3433
+      "sha256": "3c39287756a2332b34c78b241b75deba75a96f67fde444f3138de066f5bbf453",
+      "size": 3510
     },
     {
       "path": "packages/cli/src/local-source-adapter.test.ts",
@@ -437,12 +447,12 @@
     },
     {
       "path": "packages/otel/CHANGELOG.md",
-      "sha256": "67ce00c43f9b8e9594c801508bf6c167b32ee4cb64ee1d3e26de56cf149b9345",
-      "size": 374
+      "sha256": "a6b7646014ffa16179d010af3474e3a65122e2bc1eff354e3347149b2fe440f2",
+      "size": 665
     },
     {
       "path": "packages/otel/package.json",
-      "sha256": "022c9165e5e284dc6c843dd6c73e96b4a2205fed9bb56e1d4457390e1b54c78a",
+      "sha256": "ebfaa0974efc089b7303a7c7599f61bb9a00d102d8485399b7ea7f29a6d39d40",
       "size": 1582
     },
     {
@@ -471,19 +481,34 @@
       "size": 1383
     },
     {
+      "path": "packages/runtime/capabilities/agent-capabilities.v1.json",
+      "sha256": "a08391cdb33f20ef6e5cb4caedbacac6b78f311500e414505e4c2cfa7150c2b0",
+      "size": 42798
+    },
+    {
       "path": "packages/runtime/CHANGELOG.md",
-      "sha256": "9cf84f4031eafe75509b7008f25acaed05d3033e2dce366d80f2b79e8a8cc772",
-      "size": 2018
+      "sha256": "85e0cf0075c06a7a07899573f298307dc05764562a1f410085c6de67f135d5a9",
+      "size": 5560
     },
     {
       "path": "packages/runtime/package.json",
-      "sha256": "341f724d7b6d243c106a9d4164b8a587625b54acd57ddc7edd6c6edd6ec03da1",
-      "size": 2229
+      "sha256": "eb6e37c9751373de58435c1c28a9b03d096e813dc67aa8161a4cee419d5db8d0",
+      "size": 2883
     },
     {
       "path": "packages/runtime/README.md",
-      "sha256": "bd3d6bb990a2c3976f5979b2f3d039e4cf28daa8a4eacfc6d74233faba2c01b6",
-      "size": 14674
+      "sha256": "a9db5e75ee9310c54e404ed40f90ab4d4821685e803ef6b8715a54a1c2c905e0",
+      "size": 15312
+    },
+    {
+      "path": "packages/runtime/schemas/agent.v1.json",
+      "sha256": "16da9aaaac7ac00d811da3248e224b4b0c1a3ab28821ff6106adc48b0403f6ab",
+      "size": 39533
+    },
+    {
+      "path": "packages/runtime/schemas/agent.v2.json",
+      "sha256": "69a54c3ff2654b852d6bea20ecc705edeff0e626587116cab148e1a2ebf098c8",
+      "size": 6884
     },
     {
       "path": "packages/runtime/scripts/test-actions.mjs",
@@ -499,6 +524,21 @@
       "path": "packages/runtime/scripts/test-artifact-contract.mjs",
       "sha256": "2b347db9faba21b025250255ed1bf02d82c4583d5a7ad92bf011ae3e8fa49e41",
       "size": 536
+    },
+    {
+      "path": "packages/runtime/scripts/test-capability-execute.mjs",
+      "sha256": "8615182ecef3fedb4b2df7c1ba310dbf45cc8bf6ff17ef05a4b4c1a10bfb41c1",
+      "size": 552
+    },
+    {
+      "path": "packages/runtime/scripts/test-deployment-contract.mjs",
+      "sha256": "6b73eeea7216b19fef2e44b96730b0f166fdb92d9b7dc7af7dbb0bee71d5c0ec",
+      "size": 549
+    },
+    {
+      "path": "packages/runtime/scripts/test-engine-cost.mjs",
+      "sha256": "818a18c26a5653c371ad5958a22205091749218c88664e010ee6ca8fb575e79c",
+      "size": 726
     },
     {
       "path": "packages/runtime/scripts/test-engine-sources.mjs",
@@ -526,9 +566,29 @@
       "size": 540
     },
     {
+      "path": "packages/runtime/scripts/test-schema-drift.mjs",
+      "sha256": "220a499ed8aba3890f56395c88d542eb21a6d1c0f24d8410e18274e03384d913",
+      "size": 867
+    },
+    {
       "path": "packages/runtime/scripts/test-source-contract.mjs",
       "sha256": "b23935cdd2b3c38bf8cfcfe69dcccd249d9642ff9e4c75949327c249495a3ceb",
       "size": 540
+    },
+    {
+      "path": "packages/runtime/skills/agentmug-worker-author/SKILL.md",
+      "sha256": "26186397e2ef1198902824dbe88456ab8f7f60c557fe9cc763659cbae3dbdfea",
+      "size": 4730
+    },
+    {
+      "path": "packages/runtime/src/actions/obligations.test.ts",
+      "sha256": "623ff1bd77d8dee7ab69e89e1905d615d9153f9308be5b4dfb3141066adb448d",
+      "size": 2163
+    },
+    {
+      "path": "packages/runtime/src/actions/obligations.ts",
+      "sha256": "4f34a28f0ef3ee8fdd05468b22c407872982d9e9e01a4efcac94f22b2acb1a02",
+      "size": 4237
     },
     {
       "path": "packages/runtime/src/actions/types.test.ts",
@@ -542,38 +602,38 @@
     },
     {
       "path": "packages/runtime/src/adapters/llm-gemini.test.ts",
-      "sha256": "59823042848898a2cda5b535ee5c43039ebac1af2ec16f95185ac253f7695603",
-      "size": 3809
+      "sha256": "914f2d8ef1513f7b29394c494add4ee805ff3de1a8406d1bc93fbbac5db34025",
+      "size": 3997
     },
     {
       "path": "packages/runtime/src/adapters/llm-gemini.ts",
-      "sha256": "9e38a26e4d4bc6a8b1cd9cfc472ba7338fc657749ad5bab72b33304c1ea72bdb",
-      "size": 9803
+      "sha256": "aeca2a04f0520e2419bab515b8068209fb2061dbecbf4954b6dedc7b06fe43c2",
+      "size": 10102
     },
     {
       "path": "packages/runtime/src/adapters/llm-multi.test.ts",
-      "sha256": "e2f4b3231bae18b1ebb95b95848b5b481abb57c538f0c00c9dc4e02f20943b09",
-      "size": 13672
+      "sha256": "73faf8dab7ecfcf4f10994e1113867c550f9a2d31e383067299b143f03cb9cf5",
+      "size": 20228
     },
     {
       "path": "packages/runtime/src/adapters/llm-multi.ts",
-      "sha256": "320586116c0c2f1852dc198b83b7142c3e48035940cdab73e5994b027a633ea6",
-      "size": 16529
+      "sha256": "2f2a1602ee327eb93ec1558042619d375959154e9c9f3cd325ccb5d69177e14c",
+      "size": 16650
     },
     {
       "path": "packages/runtime/src/adapters/llm-openai.ts",
-      "sha256": "23fa41fe4c7593ee1bfc34c237e1d760048f637328f2853da64f55f0fdf741d3",
-      "size": 12917
+      "sha256": "ce7f3f52b86857fc65afe39c6f52260979349e33f02ac217cb06478e6041fd52",
+      "size": 17354
     },
     {
       "path": "packages/runtime/src/adapters/llm.ts",
-      "sha256": "0c9b9a823cc1af6a8b1bae012a261f910d6525d74837786c8d7c0bd9b2f0f48f",
-      "size": 11139
+      "sha256": "6cda214d24937f9b4f5111857bb653e5f372afa25b7d48280c9560e5b8ff3465",
+      "size": 11797
     },
     {
       "path": "packages/runtime/src/adapters/persistence.ts",
-      "sha256": "6e9ef46c433b6f1f4031949d9e83f1e10fac43003f9c4c316ea9c787d25cb5a5",
-      "size": 5140
+      "sha256": "91d30a3c68349d498f8b6ea020cd5c925767175d3a3201ece514f32996eeb9e1",
+      "size": 7945
     },
     {
       "path": "packages/runtime/src/adapters/reminders.ts",
@@ -611,9 +671,14 @@
       "size": 3723
     },
     {
+      "path": "packages/runtime/src/capabilities/executable-capability.ts",
+      "sha256": "d202c3eaf8a3080108ca098372b97282d3887d6443e47a4c04ade9fb6a829523",
+      "size": 11356
+    },
+    {
       "path": "packages/runtime/src/capability-grounding.ts",
-      "sha256": "ae051ee8b5cb8b3f8b3b6c912cedb7ada54de4ee6750864b333871e806ac1160",
-      "size": 4281
+      "sha256": "d612a659b31bc8128cb26db5ac7ec87828f227353881239c7e6af79c19e96849",
+      "size": 10083
     },
     {
       "path": "packages/runtime/src/connection-grounding.ts",
@@ -621,34 +686,54 @@
       "size": 3613
     },
     {
+      "path": "packages/runtime/src/deployment/registry-contract.test.ts",
+      "sha256": "0b648945db7fbbb3c42803fde6f603cd8973ce52040eb151b9cfb406633b74f6",
+      "size": 1912
+    },
+    {
+      "path": "packages/runtime/src/deployment/registry-contract.ts",
+      "sha256": "b7bf7cf2b28d1ac564d40a2ddc71100332c1a3f4a3f881d27a2abd2062b73fcd",
+      "size": 5474
+    },
+    {
       "path": "packages/runtime/src/engine-actions.test.ts",
-      "sha256": "687ac83b2af67affaf7fa9edf30deb8c74c6fc52cb97bad7ae0f1bbbc3a8b76f",
-      "size": 5269
+      "sha256": "675b1e7f86898736a46cd2dad6a70b0042bcbe49825f83d52df8c2994bdd4c3d",
+      "size": 13185
+    },
+    {
+      "path": "packages/runtime/src/engine-cost.test.ts",
+      "sha256": "77fbb7e3b41788239901ddcbc3e785682590a7b1677420903da83f89a6a129a7",
+      "size": 2404
     },
     {
       "path": "packages/runtime/src/engine-sources.test.ts",
-      "sha256": "15a526099f67bac469e2d4d0ab215be7d4d2d38b5db1410d3ec0f3c7e91e46ea",
-      "size": 20102
+      "sha256": "099fa67f4ccb382f8db3e6243a955bc5cc88b3e36dabb733f17aab3183c5b490",
+      "size": 20822
     },
     {
       "path": "packages/runtime/src/engine.ts",
-      "sha256": "af07e74c87be680cadbc9d0160e95e27a8d50814ad7afc255cfdc48cbb6258f7",
-      "size": 93014
+      "sha256": "61f23bbc8c4ad0f7ccaa1104b3858fef92d1d12d8b9666a1a1cadb2234a54f30",
+      "size": 106101
     },
     {
       "path": "packages/runtime/src/format/agent-file.test.ts",
-      "sha256": "0fe1a074f04b27034ae060b68f32c167ddab1a13b28962103c40adbe0f17073d",
-      "size": 8296
+      "sha256": "cdb8ec086f67ce7f8fee2a5cbb8cd866b9238e1477da7c47b6571120052a7e41",
+      "size": 12983
     },
     {
       "path": "packages/runtime/src/format/agent-file.ts",
-      "sha256": "fcb742614dbc89688948b02e7a6692b2bdee8e56efd1de4da8004442cd7ed6fe",
-      "size": 52762
+      "sha256": "2891f3a4b74d1f6d43e662fe43130d1f8058e620975a0dcc5047d3a5407a59a0",
+      "size": 65088
     },
     {
       "path": "packages/runtime/src/format/ascii-slug.ts",
       "sha256": "45ff24f727382c7c2d9bee075e7ded4295466684ddb4e29c513dd370945c110a",
       "size": 961
+    },
+    {
+      "path": "packages/runtime/src/format/schema-drift.test.ts",
+      "sha256": "29cd29797a593317f337f639a96efafc7ea488b98b9a1c0e07c027fce865ed24",
+      "size": 19908
     },
     {
       "path": "packages/runtime/src/identity-grounding.ts",
@@ -657,8 +742,8 @@
     },
     {
       "path": "packages/runtime/src/index.ts",
-      "sha256": "3a9072e64b5e4f5e956ac724a9be3ef3761583760ab5ac60a04b7e6ce2da2fd3",
-      "size": 16379
+      "sha256": "19c6b983f04f339b11a0d9b66ebf44c5895d44499089b46068b6bf87a193a7e1",
+      "size": 18406
     },
     {
       "path": "packages/runtime/src/inputs/types.ts",
@@ -677,8 +762,8 @@
     },
     {
       "path": "packages/runtime/src/quickstart.ts",
-      "sha256": "e77778bfa99417b1410e89873ee50ee5cdad105baeceab09f78e69989bc9bb71",
-      "size": 8160
+      "sha256": "598dc9538338b2988edad74398c7ed87ca8487d991a703a4d28d7edd17958ed1",
+      "size": 8863
     },
     {
       "path": "packages/runtime/src/sources/adapters.ts",
@@ -746,6 +831,16 @@
       "size": 1631
     },
     {
+      "path": "packages/runtime/src/tools/builtin/capability-execute.test.ts",
+      "sha256": "46f39ea5c2f11f3f9a3937e01be4fdea6c18028d2de577ae4f6548a5315ce98f",
+      "size": 6332
+    },
+    {
+      "path": "packages/runtime/src/tools/builtin/capability-execute.ts",
+      "sha256": "f95a491f714530ddb51d807157ca1834a8040fdcdfc61d3d57ea97810335a036",
+      "size": 11102
+    },
+    {
       "path": "packages/runtime/src/tools/builtin/code-execute.ts",
       "sha256": "14a1e106d1a3c4139c0d042b742b84da9dfe480fcc37dd5aae0046398c7c1de8",
       "size": 3448
@@ -792,8 +887,8 @@
     },
     {
       "path": "packages/runtime/src/tools/builtin/gmail-list-messages.ts",
-      "sha256": "45d5ea1ffa528ed1324909e9af0f554074dc0056d5ec24c0d058854c4762d4d3",
-      "size": 1764
+      "sha256": "90c82bf63bc07b92961e7304215d29b52a82d7bc8c0cbd4b193c3945dda62b82",
+      "size": 2092
     },
     {
       "path": "packages/runtime/src/tools/builtin/gmail-send.ts",
@@ -816,6 +911,16 @@
       "size": 3259
     },
     {
+      "path": "packages/runtime/src/tools/builtin/list-reminders.test.ts",
+      "sha256": "91b0c3527ba8da5cf7e28d0d298f25e0ec1b495c86e8c0f72474f82c7920381d",
+      "size": 517
+    },
+    {
+      "path": "packages/runtime/src/tools/builtin/list-reminders.ts",
+      "sha256": "2371005291db0080f60d1fe41c9e742412a6ec69e29f61ac23e5a3ef0dc87d73",
+      "size": 1593
+    },
+    {
       "path": "packages/runtime/src/tools/builtin/memory.ts",
       "sha256": "ff5b588f41a748819143aa4672903e6524909124b16ca7d320be5e03e729d380",
       "size": 6319
@@ -826,9 +931,14 @@
       "size": 2601
     },
     {
+      "path": "packages/runtime/src/tools/builtin/request-capability.test.ts",
+      "sha256": "299cca54bc11fb73a15438ea893eca0b3c9db4ad0ca18a20642e5320825c49b2",
+      "size": 442
+    },
+    {
       "path": "packages/runtime/src/tools/builtin/request-capability.ts",
-      "sha256": "734b1b08964d2e94d6b6c52d0bc695b871bda0959d34ba813314ce5828a2e575",
-      "size": 2728
+      "sha256": "191c91ef48ce5105be6990eb28925e882b99910e8b78c8bee431eca580e0d5e1",
+      "size": 3008
     },
     {
       "path": "packages/runtime/src/tools/builtin/sheets-append-row.ts",
@@ -907,8 +1017,8 @@
     },
     {
       "path": "packages/runtime/src/tools/builtin-executors/webhook-executor.ts",
-      "sha256": "c54817282e6a14b58d4eb60c8a3ac8dcdba323a4f12c5d804b3912d0202885f4",
-      "size": 4589
+      "sha256": "81adfa3fd3975ecba03b2f2921de726a8a19478d0e5ffe8acc76f92a554aed8e",
+      "size": 5599
     },
     {
       "path": "packages/runtime/src/tools/core-plugin.ts",
@@ -932,8 +1042,8 @@
     },
     {
       "path": "packages/runtime/src/tools/side-effect-gate.ts",
-      "sha256": "a812dfcb05675efd7c4d005951039509bdb870f0574895b6f6425056131c8968",
-      "size": 15840
+      "sha256": "fd3e61aa4ee99ea550ec2dcf0adb4537d3383f680c705c279d22b66edc5c7c4a",
+      "size": 16019
     },
     {
       "path": "packages/runtime/src/tools/types.ts",
@@ -951,24 +1061,29 @@
       "size": 1404
     },
     {
+      "path": "packages/runtime/src/usage-cost.ts",
+      "sha256": "e196311bf37105039c3479ecaace8044d4a54a7fd1ac7c3cadb4e00f2579417a",
+      "size": 938
+    },
+    {
       "path": "packages/runtime/tsconfig.build.json",
       "sha256": "5abe634e3a759804f7cbc869ecc6bede31891c739ae415e44b571aa06004c35d",
       "size": 248
     },
     {
       "path": "packages/runtime/tsconfig.json",
-      "sha256": "e2e050a63981f688ed3acb17a9c499859508e91701c50411e44a8345dbfb355b",
-      "size": 160
+      "sha256": "9f082a1cebed498a27ea85f96723c9afdd541e57d12dc1c0411f8d9d2a59babe",
+      "size": 200
     },
     {
       "path": "pnpm-lock.yaml",
-      "sha256": "cadcf32493ac3fcf58fc5e521c01c5074be22a2fe146c2f782c5c79694a7e6c6",
-      "size": 91709
+      "sha256": "48515004866860a3fd5532eb543376ec1ea0950b2fd473d23a533c460e6dc433",
+      "size": 92138
     },
     {
       "path": "pnpm-workspace.yaml",
-      "sha256": "8e01464fb2f5c69423b6f54cd294f6ccb8ed7234b2366879d04214429da4d774",
-      "size": 695
+      "sha256": "ae97ddb7156051d7aac219d70c6aff72dbc23ee29c136476647b708e9fa590d6",
+      "size": 970
     },
     {
       "path": "PUBLIC_RELEASE.md",
@@ -977,13 +1092,13 @@
     },
     {
       "path": "README.md",
-      "sha256": "de6075f06e6e0ea012abf3ee8d45681f2684b62059bb7685d9c822e489cdb3c1",
-      "size": 4707
+      "sha256": "fb3bb56da037039ad44acb582c036b304c80d647e970bbcbfc74e2e4c3706eac",
+      "size": 4995
     },
     {
       "path": "scripts/audit-public-core.mjs",
-      "sha256": "8c51fc2d5bcf9f922efec8cb27700ccc19a16eee0555f29875a726905010187c",
-      "size": 24210
+      "sha256": "b5a5156bfd9605c0fab7be9abbc8fc5657aefe2d76a27573ea14381ec3ddb4cc",
+      "size": 24475
     },
     {
       "path": "scripts/audit-public-core.test.mjs",
@@ -992,8 +1107,8 @@
     },
     {
       "path": "scripts/check-production-licenses.mjs",
-      "sha256": "205e190690fe4feae9c183b958a15a8017fabf7b47b16c8dd481bae1afa871e1",
-      "size": 3193
+      "sha256": "32e6b39f95495696208caf09d4afd23cf6b2ba18445e7d96e109d642ada0b39d",
+      "size": 3367
     },
     {
       "path": "scripts/check-public-package-licenses.mjs",
@@ -1027,8 +1142,8 @@
     },
     {
       "path": "scripts/public-core-release-state.test.mjs",
-      "sha256": "0dc89e3fe55762097b67fcfae2301524b7f7314cd22b7add23782eccfd8ddacb",
-      "size": 7296
+      "sha256": "debda2a50f7932cad22f1ecf8baa0d2ccbc24d93d8de8f2b882e41d76720a423",
+      "size": 8679
     },
     {
       "path": "scripts/test-public-core-version-transition.mjs",
@@ -1037,8 +1152,8 @@
     },
     {
       "path": "scripts/verify-package-tarballs.mjs",
-      "sha256": "5a5700e436e37a45c33f1de71968a4723569ffe1e77575b57808b7e310698800",
-      "size": 5111
+      "sha256": "f30ca4329d92b483b93f8cf7a183af12535152398de0ab377dc1f8dd4479ce88",
+      "size": 5931
     },
     {
       "path": "scripts/write-bundle-notices.mjs",
@@ -1051,9 +1166,24 @@
       "size": 1311
     },
     {
+      "path": "spec/agent-v1.md",
+      "sha256": "8a5d0c0c23c524bece3fc09da96318fe261e2c15988b9337fd2682c279ea3177",
+      "size": 52744
+    },
+    {
+      "path": "spec/agent-v2.md",
+      "sha256": "dfb9362cc45ea84ba273d17f07b5abcb3dd06a218692e007dc451bf0844fd69c",
+      "size": 7100
+    },
+    {
       "path": "spec/agent.v1.json",
-      "sha256": "95d971d2d50a40df1d6f3fcdaca22ef4c28587cf0caab9ffc7f3a517b966e7bd",
-      "size": 31137
+      "sha256": "16da9aaaac7ac00d811da3248e224b4b0c1a3ab28821ff6106adc48b0403f6ab",
+      "size": 39533
+    },
+    {
+      "path": "spec/agent.v2.json",
+      "sha256": "69a54c3ff2654b852d6bea20ecc705edeff0e626587116cab148e1a2ebf098c8",
+      "size": 6884
     },
     {
       "path": "THIRD_PARTY_NOTICES.md",

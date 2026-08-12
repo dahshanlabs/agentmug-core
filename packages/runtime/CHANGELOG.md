@@ -1,5 +1,28 @@
 # @agentmug/runtime
 
+## 0.18.0
+
+### Minor Changes
+
+- a05a2ef: Expose durable provider-call cost receipts, usage-quality metadata, reasoning-effort controls, and compatible-endpoint helpers so hosts can route tenant-selected models, recover interrupted runs, and attribute billing without treating estimated usage as exact.
+- ed5c141: The generated capability matrix (agent-capabilities.v1.json — every tool × surface × auth requirement, derived from the live cloud/runtime registries and guarded against drift in CI) now ships inside the npm package under `capabilities/` and is published at https://agentmug.com/schemas/agent-capabilities.v1.json. External authors and coding agents can check which tools actually run on which surface before generating a .agent file. Includes an honesty fix: shell.execute is now marked NOT cloud-available (its cloud registration is a refusal stub that points to desktop).
+- 3035ece: The published .agent JSON Schema (agent.v1.json) now ships inside the npm package under `schemas/`, and a new schema↔parser drift test guards it against `parseAgentFile()` in CI. External authors — including coding agents — can validate files against the exact schema the runtime enforces, offline, at the version they installed. Fixes six published-schema drift bugs: `modelPolicy`, `execution`, `outcomeContract`/`capabilityPlan` were missing entirely; `connectivity.identities`/`delivers` over-required `role`/`to`; `select` parameters didn't require `options`; skill library pins didn't require both `librarySkillId` and `librarySkillVersion`.
+- d02fbd5: Add digest-pinned verified capability execution with explicit host trust and sandbox gates, plus stable run identity support for durable, reconnect-safe background execution. Portable CLI workflows preserve capability artifacts and fail closed until the local host can verify and isolate the exact artifact digest.
+
+### Patch Changes
+
+- 103737f: The official worker-authoring skill (skills/agentmug-worker-author/SKILL.md) ships in the npm package and is published at https://agentmug.com/skills/agentmug-worker-author.md — a drop-in skill for Claude Code, Cursor, or any coding agent covering buildAgentFile() authoring, the capability-matrix check, the caveat honesty contract, the no-private-data rule, and the validate→push loop.
+- 0f4886e: New CLI verbs for agents-as-code workflows: `agentmug validate <file>` checks a .agent file against the exact parser every runtime uses and warns on tools that don't exist on any surface (via the shipped capability matrix; `--strict` exits 2 on warnings for CI), and `agentmug push <file>` validates locally, previews the import (tools, connections, source rebinds, disabled schedules, private-knowledge consent), then imports to your account with an `am_user_` API key. The runtime package adds subpath exports for `schemas/agent.v1.json` and `capabilities/agent-capabilities.v1.json` so tooling can resolve both data files directly.
+- 11a3b17: Treat capability requests as required pending proof obligations instead of completed side effects, and add the portable bounded `list_reminders` tool contract used by owner-scoped cloud reminder reads.
+
+### Security contract
+
+- Keep `agent.v1` permanently code-free. Executable reusable capabilities now
+  travel only in explicit `agent.v2` `capabilityCapsules`; pre-v2 hosts reject
+  the schema marker, and current hosts quarantine capsules until host-owned
+  digest trust plus an isolated no-network sandbox are present. Imports never
+  mint trust from file-controlled proof.
+
 ## 0.16.1
 
 ### Patch Changes

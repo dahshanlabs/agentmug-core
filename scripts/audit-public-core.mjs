@@ -93,7 +93,10 @@ const requiredPaths = [
   ".github/workflows/release-n8n.yml",
   ".github/workflows/release.yml",
   "config/public-core-release.json",
+  "spec/agent-v1.md",
+  "spec/agent-v2.md",
   "spec/agent.v1.json",
+  "spec/agent.v2.json",
   "packages/runtime/src/format/agent-file.ts",
   "integrations/n8n-nodes-agentmug/LICENSE",
   "integrations/n8n-nodes-agentmug/eslint.config.mjs",
@@ -398,30 +401,34 @@ async function validatePackages(root, publicRepository, violations) {
   }
 }
 
-async function validateAgentSchema(root, violations) {
-  const schemaPath = path.join(root, "spec", "agent.v1.json");
-  let schema;
-  try {
-    schema = JSON.parse(await readFile(schemaPath, "utf8"));
-  } catch {
-    violations.push("spec/agent.v1.json: invalid JSON Schema document");
-    return;
-  }
+async function validateAgentSchemas(root, violations) {
+  for (const version of [1, 2]) {
+    const relative = `spec/agent.v${version}.json`;
+    const schemaPath = path.join(root, "spec", `agent.v${version}.json`);
+    let schema;
+    try {
+      schema = JSON.parse(await readFile(schemaPath, "utf8"));
+    } catch {
+      violations.push(`${relative}: invalid JSON Schema document`);
+      continue;
+    }
 
-  if (schema.$schema !== "https://json-schema.org/draft/2020-12/schema") {
-    violations.push("spec/agent.v1.json: expected JSON Schema draft 2020-12");
-  }
-  if (schema.$id !== "https://agentmug.com/schemas/agent.v1.json") {
-    violations.push("spec/agent.v1.json: unexpected canonical $id");
-  }
-  if (
-    schema.type !== "object" ||
-    !schema.properties?.blueprint ||
-    !schema.properties?.inputs
-  ) {
-    violations.push(
-      "spec/agent.v1.json: missing required agent-file schema structure",
-    );
+    if (schema.$schema !== "https://json-schema.org/draft/2020-12/schema") {
+      violations.push(`${relative}: expected JSON Schema draft 2020-12`);
+    }
+    if (schema.$id !== `https://agentmug.com/schemas/agent.v${version}.json`) {
+      violations.push(`${relative}: unexpected canonical $id`);
+    }
+    if (
+      schema.type !== "object" ||
+      !schema.properties?.blueprint ||
+      !schema.properties?.inputs ||
+      (version === 2 && !schema.properties?.capabilityCapsules)
+    ) {
+      violations.push(
+        `${relative}: missing required agent-file schema structure`,
+      );
+    }
   }
 }
 
@@ -761,7 +768,7 @@ export async function auditPublicCore({
     );
   }
 
-  await validateAgentSchema(resolvedRoot, violations);
+  await validateAgentSchemas(resolvedRoot, violations);
   await validateN8nStrictTooling(resolvedRoot, violations);
   await validateWorkflows(resolvedRoot, violations);
   try {

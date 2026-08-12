@@ -15,7 +15,8 @@ import type { LlmStreamEvent, LlmStreamParams } from "./llm";
 
 type Test = { name: string; fn: () => void | Promise<void> };
 const tests: Test[] = [];
-const test = (name: string, fn: () => void | Promise<void>) => tests.push({ name, fn });
+const test = (name: string, fn: () => void | Promise<void>) =>
+  tests.push({ name, fn });
 
 const PARAMS = (model: string): LlmStreamParams => ({
   model,
@@ -31,6 +32,15 @@ const SSE =
   'data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}\n\n' +
   'data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n' +
   'data: {"id":"1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}\n\n' +
+  "data: [DONE]\n\n";
+const SSE_WITHOUT_USAGE =
+  'data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}\n\n' +
+  'data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n' +
+  "data: [DONE]\n\n";
+const SSE_WITH_PARTIAL_USAGE =
+  'data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"a long provider response"},"finish_reason":null}]}\n\n' +
+  'data: {"id":"1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n' +
+  'data: {"id":"1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":1}}\n\n' +
   "data: [DONE]\n\n";
 
 function capturingFetch(sse = SSE) {
@@ -92,39 +102,224 @@ test("custom endpoint: local/ namespace routes to the custom baseURL", async () 
   const cap = capturingFetch();
   const client = createMultiLlmClient({
     anthropic: { apiKey: "sk-a" },
-    custom: { baseURL: "http://localhost:11434/v1", models: ["llama3.1"], fetch: cap.fn },
+    custom: {
+      baseURL: "http://localhost:11434/v1",
+      models: ["llama3.1"],
+      fetch: cap.fn,
+    },
   });
   await drain(client, "local/anything");
-  assert.ok(cap.calls[0]?.url.startsWith("http://localhost:11434/v1"), `routed to ${cap.calls[0]?.url}`);
+  assert.ok(
+    cap.calls[0]?.url.startsWith("http://localhost:11434/v1"),
+    `routed to ${cap.calls[0]?.url}`,
+  );
 });
 
 test("custom endpoint: an explicitly-listed model routes there", async () => {
   const cap = capturingFetch();
   const client = createMultiLlmClient({
-    custom: { baseURL: "http://localhost:1234/v1", models: ["llama3.1"], fetch: cap.fn },
+    custom: {
+      baseURL: "http://localhost:1234/v1",
+      models: ["llama3.1"],
+      fetch: cap.fn,
+    },
   });
   await drain(client, "llama3.1");
-  assert.ok(cap.calls[0]?.url.startsWith("http://localhost:1234/v1"), `routed to ${cap.calls[0]?.url}`);
+  assert.ok(
+    cap.calls[0]?.url.startsWith("http://localhost:1234/v1"),
+    `routed to ${cap.calls[0]?.url}`,
+  );
 });
 
-test("custom endpoint: forcePlainMaxTokens sends max_tokens even for a gpt-5-named local model", async () => {
+test("custom endpoint: retries gpt-5 with max_tokens only after an explicit unsupported-parameter 400", async () => {
   const cap = capturingFetch();
+  const calls: typeof cap.calls = [];
+  const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+      string,
+      unknown
+    >;
+    calls.push({ url: input.toString(), body });
+    if ("max_completion_tokens" in body) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            message:
+              "Unsupported parameter: max_completion_tokens. Use max_tokens instead.",
+            type: "invalid_request_error",
+            param: "max_completion_tokens",
+            code: "unsupported_parameter",
+          },
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    }
+    return cap.fn(input, init);
+  }) as typeof globalThis.fetch;
   const client = createMultiLlmClient({
-    custom: { baseURL: "http://localhost:1234/v1", models: ["gpt-5-local"], fetch: cap.fn },
+    custom: {
+      baseURL: "http://localhost:1234/v1",
+      models: ["gpt-5-local"],
+      fetch,
+    },
   });
   await drain(client, "gpt-5-local");
-  const body = cap.calls[0]?.body as Record<string, unknown>;
-  assert.ok("max_tokens" in body, "should send max_tokens for a local model");
-  assert.ok(!("max_completion_tokens" in body), "should NOT send max_completion_tokens");
+  assert.equal(calls.length, 2);
+  assert.ok("max_completion_tokens" in (calls[0]?.body as object));
+  assert.ok("max_tokens" in (calls[1]?.body as object));
+});
+
+test("custom endpoint: retries an aliased reasoning model with max_completion_tokens", async () => {
+  const cap = capturingFetch();
+  const calls: typeof cap.calls = [];
+  const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+      string,
+      unknown
+    >;
+    calls.push({ url: input.toString(), body });
+    if ("max_tokens" in body) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            message:
+              "max_tokens is not supported by this model; use max_completion_tokens",
+            type: "invalid_request_error",
+            param: "max_tokens",
+            code: "unsupported_parameter",
+          },
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    }
+    return cap.fn(input, init);
+  }) as typeof globalThis.fetch;
+  const client = createMultiLlmClient({
+    custom: {
+      baseURL: "https://models.example.com/v1",
+      models: ["company/reasoner"],
+      fetch,
+    },
+  });
+  await drain(client, "company/reasoner");
+  assert.equal(calls.length, 2);
+  assert.ok("max_tokens" in (calls[0]?.body as object));
+  assert.ok("max_completion_tokens" in (calls[1]?.body as object));
+});
+
+test("custom endpoint: drops unsupported stream_options and emits a conservative usage estimate", async () => {
+  const cap = capturingFetch(SSE_WITHOUT_USAGE);
+  const calls: typeof cap.calls = [];
+  const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+      string,
+      unknown
+    >;
+    calls.push({ url: input.toString(), body });
+    if ("stream_options" in body) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            message: "Unknown parameter: stream_options",
+            type: "invalid_request_error",
+            param: "stream_options",
+            code: "unknown_parameter",
+          },
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    }
+    return cap.fn(input, init);
+  }) as typeof globalThis.fetch;
+  const client = createMultiLlmClient({
+    custom: {
+      baseURL: "https://models.example.com/v1",
+      models: ["local-chat"],
+      fetch,
+    },
+  });
+  const events: LlmStreamEvent[] = [];
+  for await (const event of client.streamMessage(PARAMS("local-chat"))) {
+    events.push(event);
+  }
+  assert.equal(calls.length, 2);
+  assert.ok("stream_options" in (calls[0]?.body as object));
+  assert.ok(!("stream_options" in (calls[1]?.body as object)));
+  const inputUsage = events.find((event) => event.type === "input_tokens");
+  const outputUsage = events.find((event) => event.type === "output_tokens");
+  assert.ok(inputUsage && inputUsage.type === "input_tokens");
+  assert.ok(outputUsage && outputUsage.type === "output_tokens");
+  assert.ok(inputUsage.count > 0);
+  assert.equal(outputUsage.count, 100);
+  assert.equal(inputUsage.usage, "estimated");
+  assert.equal(outputUsage.usage, "estimated");
+});
+
+test("custom endpoint: partial streamed usage never becomes an exact receipt", async () => {
+  const cap = capturingFetch(SSE_WITH_PARTIAL_USAGE);
+  const client = createMultiLlmClient({
+    custom: {
+      baseURL: "https://models.example.com/v1",
+      models: ["local-chat"],
+      fetch: cap.fn,
+    },
+  });
+  const events: LlmStreamEvent[] = [];
+  for await (const event of client.streamMessage(PARAMS("local-chat"))) {
+    events.push(event);
+  }
+  const inputUsage = events.find((event) => event.type === "input_tokens");
+  const outputUsage = events.find((event) => event.type === "output_tokens");
+  assert.ok(inputUsage && inputUsage.type === "input_tokens");
+  assert.ok(outputUsage && outputUsage.type === "output_tokens");
+  assert.ok(inputUsage.count > 1);
+  assert.equal(outputUsage.count, 100);
+  assert.equal(inputUsage.usage, "estimated");
+  assert.equal(outputUsage.usage, "estimated");
+});
+
+test("custom endpoint: never negotiates on an authentication failure", async () => {
+  let calls = 0;
+  const fetch = (async () => {
+    calls += 1;
+    return new Response(
+      JSON.stringify({
+        error: {
+          message: "Invalid API key",
+          type: "authentication_error",
+          code: "invalid_api_key",
+        },
+      }),
+      { status: 401, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof globalThis.fetch;
+  const client = createMultiLlmClient({
+    custom: {
+      baseURL: "https://models.example.com/v1",
+      models: ["gpt-5-private"],
+      fetch,
+    },
+  });
+  await assert.rejects(() => drain(client, "gpt-5-private"));
+  assert.equal(calls, 1);
 });
 
 test("fetch injection: an OpenAI-compat vendor uses the injected fetch + its baseURL", async () => {
   const cap = capturingFetch();
   const client = createMultiLlmClient({
-    compat: { deepseek: { apiKey: "sk-d", baseURL: "https://api.deepseek.com", fetch: cap.fn } },
+    compat: {
+      deepseek: {
+        apiKey: "sk-d",
+        baseURL: "https://api.deepseek.com",
+        fetch: cap.fn,
+      },
+    },
   });
   await drain(client, "deepseek-chat");
-  assert.equal(new URL(cap.calls[0]?.url ?? "").origin, "https://api.deepseek.com");
+  assert.equal(
+    new URL(cap.calls[0]?.url ?? "").origin,
+    "https://api.deepseek.com",
+  );
 });
 
 test("every OpenAI-compatible provider preserves its endpoint and tool contract", async () => {
@@ -132,7 +327,11 @@ test("every OpenAI-compatible provider preserves its endpoint and tool contract"
     const cap = capturingFetch();
     const client = createMultiLlmClient({
       compat: {
-        [provider]: { apiKey: `sk-${provider}`, baseURL: info.baseURL, fetch: cap.fn },
+        [provider]: {
+          apiKey: `sk-${provider}`,
+          baseURL: info.baseURL,
+          fetch: cap.fn,
+        },
       },
     });
     const params: LlmStreamParams = {
@@ -152,10 +351,20 @@ test("every OpenAI-compatible provider preserves its endpoint and tool contract"
     await drainParams(client, params);
 
     const call = cap.calls[0];
-    assert.ok(call?.url.startsWith(info.baseURL), `${provider} routed to ${call?.url}`);
+    assert.ok(
+      call?.url.startsWith(info.baseURL),
+      `${provider} routed to ${call?.url}`,
+    );
     const body = call?.body as Record<string, unknown>;
-    assert.equal(body.model, params.model, `${provider} must receive the selected model id`);
-    assert.ok(Array.isArray(body.tools), `${provider} must receive tool declarations`);
+    assert.equal(
+      body.model,
+      params.model,
+      `${provider} must receive the selected model id`,
+    );
+    assert.ok(
+      Array.isArray(body.tools),
+      `${provider} must receive tool declarations`,
+    );
   }
 });
 
@@ -166,7 +375,10 @@ test("real reasoning model still uses max_completion_tokens (no forcePlainMaxTok
   });
   await drain(client, "gpt-5-mini");
   const body = cap.calls[0]?.body as Record<string, unknown>;
-  assert.ok("max_completion_tokens" in body, "gpt-5 should use max_completion_tokens");
+  assert.ok(
+    "max_completion_tokens" in body,
+    "gpt-5 should use max_completion_tokens",
+  );
 });
 
 test("Kimi K3 uses its reasoning protocol and replays reasoning_content after a tool call", async () => {
@@ -207,12 +419,17 @@ test("Kimi K3 uses its reasoning protocol and replays reasoning_content after a 
       },
     ],
   };
-  for await (const event of client.streamMessage(firstParams)) firstEvents.push(event);
-  const completed = firstEvents.find((event) => event.type === "message_complete");
+  for await (const event of client.streamMessage(firstParams))
+    firstEvents.push(event);
+  const completed = firstEvents.find(
+    (event) => event.type === "message_complete",
+  );
   assert.ok(completed && completed.type === "message_complete");
   assert.equal(completed.content[0]?.type, "thinking");
   assert.equal(
-    completed.content[0]?.type === "thinking" ? completed.content[0].thinking : "",
+    completed.content[0]?.type === "thinking"
+      ? completed.content[0].thinking
+      : "",
     "check the weather",
   );
 
@@ -225,14 +442,19 @@ test("Kimi K3 uses its reasoning protocol and replays reasoning_content after a 
       { role: "assistant", content: completed.content },
       {
         role: "user",
-        content: [{ type: "tool_result", tool_use_id: toolUse.id, content: "sunny" }],
+        content: [
+          { type: "tool_result", tool_use_id: toolUse.id, content: "sunny" },
+        ],
       },
     ],
   };
   for await (const _ of client.streamMessage(followUp)) void _;
 
   const firstBody = cap.calls[0]?.body as Record<string, unknown>;
-  assert.ok("max_completion_tokens" in firstBody, "K3 should use max_completion_tokens");
+  assert.ok(
+    "max_completion_tokens" in firstBody,
+    "K3 should use max_completion_tokens",
+  );
   assert.ok(!("max_tokens" in firstBody), "K3 should not send max_tokens");
   assert.equal(firstBody.reasoning_effort, "high");
   const firstTools = firstBody.tools as Array<{
@@ -266,10 +488,17 @@ test("Kimi K3 uses its reasoning protocol and replays reasoning_content after a 
     "K3 schema normalization must not mutate the shared source schema",
   );
 
-  const secondBody = cap.calls[1]?.body as { messages?: Array<Record<string, unknown>> };
-  const assistant = secondBody.messages?.find((message) => message.role === "assistant");
+  const secondBody = cap.calls[1]?.body as {
+    messages?: Array<Record<string, unknown>>;
+  };
+  const assistant = secondBody.messages?.find(
+    (message) => message.role === "assistant",
+  );
   assert.equal(assistant?.reasoning_content, "check the weather");
-  assert.ok(Array.isArray(assistant?.tool_calls), "tool calls must be replayed with reasoning");
+  assert.ok(
+    Array.isArray(assistant?.tool_calls),
+    "tool calls must be replayed with reasoning",
+  );
 });
 
 test("unconfigured provider throws a clear error, not a wrong route", async () => {
@@ -299,15 +528,22 @@ test("geminiViaOpenAI: a gemini-* model routes to the Gemini OpenAI-compat endpo
     ],
   });
   assert.ok(
-    cap.calls[0]?.url.startsWith("https://generativelanguage.googleapis.com/v1beta/openai/"),
+    cap.calls[0]?.url.startsWith(
+      "https://generativelanguage.googleapis.com/v1beta/openai/",
+    ),
     `routed to ${cap.calls[0]?.url}`,
   );
   const body = cap.calls[0]?.body as {
     tools?: Array<{
-      function?: { parameters?: { properties?: Record<string, Record<string, unknown>> } };
+      function?: {
+        parameters?: { properties?: Record<string, Record<string, unknown>> };
+      };
     }>;
   };
-  assert.equal(body.tools?.[0]?.function?.parameters?.properties?.units?.type, "string");
+  assert.equal(
+    body.tools?.[0]?.function?.parameters?.properties?.units?.type,
+    "string",
+  );
 });
 
 // ── runner ───────────────────────────────────────────────────────────────

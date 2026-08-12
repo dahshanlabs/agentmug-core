@@ -18,6 +18,16 @@ export type BlueprintRecord = {
   systemPrompt: string;
   primaryModel: string | null;
   /**
+   * Promises this worker was created with that nothing available can keep.
+   *
+   * Creation does not block any more — a worker with one unprovable promise
+   * still keeps the others — so these travel with the worker and become hard
+   * refusals in its prompt (buildRefusalDirective). Without them the model
+   * improvises and implies the deed was done, which is worse than the refused
+   * draft this replaced. Absent/empty on workers with nothing unkeepable.
+   */
+  unkeepablePromises?: string[] | null;
+  /**
    * Optional per-agent output token cap. The engine clamps it to a sane
    * range and falls back to its default (8192) when null/absent. Lets a
    * long-form agent ask for more headroom (or a terse one save cost)
@@ -38,6 +48,12 @@ export type BlueprintRecord = {
    */
   evaluation?: EvaluationContract;
   /**
+   * Secret-free creation contract used to prove that a run exercised every
+   * critical capability it promised. The runtime reads this defensively so
+   * older or third-party `.agent` files remain compatible.
+   */
+  capabilityPlan?: unknown;
+  /**
    * Per-agent guardrails (jsonb on the blueprint, travels in the .agent file).
    * `sideEffectGate` opts the agent into the same-turn injection backstop:
    * once the run has read UNTRUSTED external content (a2a.invoke, web/email
@@ -53,11 +69,35 @@ export type BlueprintRecord = {
   >;
 };
 
+/**
+ * WHO caused a run. Attribution is recorded on the run row so a stranger's
+ * public run, a partner's API call, and the owner's own click are three
+ * distinguishable facts instead of one undifferentiated row.
+ *   kind            — the doorway the run came through.
+ *   initiatorUserId — the concrete signed-in user who caused it, when one
+ *                     exists (null/absent for anonymous public runs and
+ *                     machine-to-machine calls with no user identity).
+ */
+export type RunPrincipal = {
+  kind:
+    | "owner"
+    | "marketplace"
+    | "public"
+    | "external"
+    | "a2a"
+    | "scheduler"
+    | "webhook"
+    | "sub_agent";
+  initiatorUserId?: string | null;
+};
+
 export type NewRun = {
   id: string;
   agentId: string;
   input: string;
   startedAt: Date;
+  /** Absent only for hosts that predate attribution (treated as unknown). */
+  principal?: RunPrincipal;
 };
 
 export type RunCompletion = {
@@ -65,6 +105,10 @@ export type RunCompletion = {
   output: string;
   totalTokens: number;
   costCents: number;
+  /** This invocation only; excludes resume snapshot priorTotals. */
+  attemptCostCents?: number;
+  /** False when an attempted provider call did not return complete usage. */
+  attemptUsageExact: boolean;
   latencyMs: number;
   llmCalls: number;
   completedAt: Date;
@@ -75,6 +119,15 @@ export type RunCompletion = {
 export type RunFailure = {
   id: string;
   output: string;
+  /** Usage already incurred before the run failed. Failures are still billable. */
+  totalTokens: number;
+  costCents: number;
+  /** This invocation only; excludes resume snapshot priorTotals. */
+  attemptCostCents?: number;
+  /** False when an attempted provider call did not return complete usage. */
+  attemptUsageExact: boolean;
+  latencyMs: number;
+  llmCalls: number;
   completedAt: Date;
   outcomeStatus?: RunOutcomeStatus;
 };
@@ -91,8 +144,24 @@ export type RunPause = {
   /** Bookkeeping for the partial run so charts stay accurate. */
   totalTokens: number;
   costCents: number;
+  /** This invocation only; excludes resume snapshot priorTotals. */
+  attemptCostCents?: number;
+  /** False when an attempted provider call did not return complete usage. */
+  attemptUsageExact: boolean;
   latencyMs: number;
   llmCalls: number;
+};
+
+/**
+ * Durable pre-dispatch marker for one primary model invocation. Cloud hosts
+ * use this to retain a conservative provider-cost floor when a process dies
+ * after dispatch but before the provider can return usage metadata.
+ */
+export type ProviderCallStart = {
+  runId: string;
+  callOrdinal: number;
+  conservativeCostCents: number;
+  startedAt: Date;
 };
 
 /** One provider the agent is connected to, with the account label(s) it uses
@@ -127,6 +196,7 @@ export interface PersistenceAdapter {
     userId: string,
   ): Promise<MissingConnection[]>;
   createRun(run: NewRun): Promise<void>;
+  recordProviderCallStarted?(call: ProviderCallStart): Promise<void>;
   completeRun(update: RunCompletion): Promise<void>;
   failRun(update: RunFailure): Promise<void>;
   /**

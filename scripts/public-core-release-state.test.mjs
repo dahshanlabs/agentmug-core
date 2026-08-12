@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -97,6 +104,46 @@ test("the repository's pending release files match its release lane", async () =
     for (const packageName of changeset.releases.keys()) {
       assert.ok(policy.releasePackages[packageName]);
     }
+  }
+});
+
+test("private and public npm builds compile the runtime before its dependents", async () => {
+  const manifestPaths = [path.join(repositoryRoot, "package.json")];
+  const privatePublicManifest = path.join(
+    repositoryRoot,
+    "config",
+    "public-core",
+    "package.json",
+  );
+  try {
+    await access(privatePublicManifest);
+    manifestPaths.push(privatePublicManifest);
+  } catch {
+    // The staged public checkout already has this manifest at its repository root.
+  }
+
+  for (const manifestPath of manifestPaths) {
+    const rootPackage = JSON.parse(await readFile(manifestPath, "utf8"));
+    const command =
+      rootPackage.scripts?.["build:npm-packages"] ??
+      rootPackage.scripts?.["build:packages"];
+    assert.equal(typeof command, "string", manifestPath);
+
+    const [runtimeBuild, ...dependentBuilds] = command.split(/\s+&&\s+/);
+    const dependents = dependentBuilds.join(" && ");
+    assert.equal(
+      runtimeBuild,
+      "pnpm --filter @agentmug/runtime run build",
+      manifestPath,
+    );
+    assert.match(dependents, /--filter @agentmug\/cli/, manifestPath);
+    assert.match(dependents, /--filter @agentmug\/mcp-bridge/, manifestPath);
+    assert.match(dependents, /--filter @agentmug\/otel/, manifestPath);
+    assert.doesNotMatch(
+      dependents,
+      /--filter @agentmug\/runtime/,
+      manifestPath,
+    );
   }
 });
 

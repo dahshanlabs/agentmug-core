@@ -61,7 +61,12 @@ See [`examples/`](examples/) and the
 [`@agentmug/runtime` documentation](packages/runtime/README.md) for complete
 usage.
 
-The versioned JSON Schema is [`spec/agent.v1.json`](spec/agent.v1.json).
+The code-free v1 contract is documented in
+[`spec/agent-v1.md`](spec/agent-v1.md) and validated by
+[`spec/agent.v1.json`](spec/agent.v1.json). The explicit executable-capsule
+boundary is documented separately in [`spec/agent-v2.md`](spec/agent-v2.md)
+and [`spec/agent.v2.json`](spec/agent.v2.json); v2 evidence never grants a host
+permission to execute itself.
 
 ## Repository map
 

@@ -40,6 +40,13 @@ export type GmailListMessage = {
   from: string;
   subject: string;
   date: string;
+  /**
+   * Gmail's server-side receive time, epoch milliseconds as a string.
+   * `date` above is the sender-controlled RFC2822 Date HEADER — the two can
+   * disagree (backdated resends, skewed sender clocks). Consumers comparing
+   * against Gmail's `after:` search clock must use this field.
+   */
+  internalDate?: string;
   snippet: string;
   unread: boolean;
 };

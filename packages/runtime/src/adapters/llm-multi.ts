@@ -22,23 +22,10 @@
 //   - anything else → OpenRouter when configured, else throws before the
 //     call so callers can fall back or surface a clear message.
 
-import {
-  AnthropicLlmClient,
-  type AnthropicLlmClientOptions,
-} from "./llm";
-import type {
-  LlmClient,
-  LlmStreamEvent,
-  LlmStreamParams,
-} from "./llm";
-import {
-  OpenAiLlmClient,
-  type OpenAiLlmClientOptions,
-} from "./llm-openai";
-import {
-  GeminiLlmClient,
-  type GeminiLlmClientOptions,
-} from "./llm-gemini";
+import { AnthropicLlmClient, type AnthropicLlmClientOptions } from "./llm";
+import type { LlmClient, LlmStreamEvent, LlmStreamParams } from "./llm";
+import { OpenAiLlmClient, type OpenAiLlmClientOptions } from "./llm-openai";
+import { GeminiLlmClient, type GeminiLlmClientOptions } from "./llm-gemini";
 
 /** Providers with first-class adapters. */
 export type LlmProvider = "anthropic" | "openai" | "gemini" | CompatProvider;
@@ -76,7 +63,10 @@ export type CompatProviderInfo = {
  * label/residency/keysUrl/exampleModel drive the BYOK pickers so the
  * desktop + CLI never hardcode a second copy of this list.
  */
-export const OPENAI_COMPAT_PROVIDERS: Record<CompatProvider, CompatProviderInfo> = {
+export const OPENAI_COMPAT_PROVIDERS: Record<
+  CompatProvider,
+  CompatProviderInfo
+> = {
   deepseek: {
     prefixes: ["deepseek-"],
     envKey: "DEEPSEEK_API_KEY",
@@ -124,7 +114,8 @@ export const OPENAI_COMPAT_PROVIDERS: Record<CompatProvider, CompatProviderInfo>
     baseURL: "https://api.minimax.io/v1",
     label: "MiniMax",
     residency: "China",
-    keysUrl: "https://www.minimax.io/platform/user-center/basic-information/interface-key",
+    keysUrl:
+      "https://www.minimax.io/platform/user-center/basic-information/interface-key",
     exampleModel: "minimax-m2",
   },
   xai: {
@@ -138,7 +129,17 @@ export const OPENAI_COMPAT_PROVIDERS: Record<CompatProvider, CompatProviderInfo>
     exampleModel: "grok-4",
   },
   mistral: {
-    prefixes: ["mistral-", "codestral-", "ministral-", "magistral-", "pixtral-", "devstral-", "voxtral-", "open-mistral-", "open-mixtral-"],
+    prefixes: [
+      "mistral-",
+      "codestral-",
+      "ministral-",
+      "magistral-",
+      "pixtral-",
+      "devstral-",
+      "voxtral-",
+      "open-mistral-",
+      "open-mixtral-",
+    ],
     envKey: "MISTRAL_API_KEY",
     envBaseUrl: "MISTRAL_BASE_URL",
     baseURL: "https://api.mistral.ai/v1",
@@ -163,7 +164,13 @@ export const OPENAI_COMPAT_PROVIDERS: Record<CompatProvider, CompatProviderInfo>
 export type NativeProvider = "anthropic" | "openai" | "gemini";
 export const NATIVE_PROVIDERS: Record<
   NativeProvider,
-  { label: string; envKey: string; residency?: string; keysUrl?: string; exampleModel?: string }
+  {
+    label: string;
+    envKey: string;
+    residency?: string;
+    keysUrl?: string;
+    exampleModel?: string;
+  }
 > = {
   anthropic: {
     label: "Anthropic (Claude)",
@@ -288,16 +295,19 @@ export class MultiLlmClient implements LlmClient {
     }
     for (const [key, opts] of Object.entries(options.compat ?? {})) {
       if (opts) {
-        this.compatClients.set(key as CompatProvider, new OpenAiLlmClient(opts));
+        this.compatClients.set(
+          key as CompatProvider,
+          new OpenAiLlmClient(opts),
+        );
       }
     }
     if (options.custom?.baseURL) {
-      // A local model isn't a reasoning model even if named "gpt-5-*", so
-      // force plain max_tokens unless the caller overrode it. apiKey is
+      // A custom endpoint may be a local server or a corporate reasoning-model
+      // gateway. Negotiate its token-limit dialect on explicit 400 responses.
       // optional (Ollama needs none) — pass a placeholder so the SDK ctor
       // doesn't reject an empty key.
       this.customClient = new OpenAiLlmClient({
-        forcePlainMaxTokens: true,
+        autoNegotiateMaxTokens: true,
         ...options.custom,
         apiKey: options.custom.apiKey || "local",
       });
@@ -320,10 +330,10 @@ export class MultiLlmClient implements LlmClient {
   hasAnyProvider(): boolean {
     return Boolean(
       this.anthropicClient ||
-        this.openaiClient ||
-        this.geminiClient ||
-        this.compatClients.size > 0 ||
-        this.customClient,
+      this.openaiClient ||
+      this.geminiClient ||
+      this.compatClients.size > 0 ||
+      this.customClient,
     );
   }
 
@@ -398,11 +408,15 @@ export class MultiLlmClient implements LlmClient {
  * keychain, not process.env. `createMultiLlmClientFromEnv` is the env-backed
  * sibling; both end at `new MultiLlmClient(options)`.
  */
-export function createMultiLlmClient(options: MultiLlmClientOptions): MultiLlmClient {
+export function createMultiLlmClient(
+  options: MultiLlmClientOptions,
+): MultiLlmClient {
   return new MultiLlmClient(options);
 }
 
-export function createMultiLlmClientFromEnv(env: NodeJS.ProcessEnv = process.env): MultiLlmClient {
+export function createMultiLlmClientFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): MultiLlmClient {
   const options: MultiLlmClientOptions = {};
   if (env.ANTHROPIC_API_KEY) {
     options.anthropic = { apiKey: env.ANTHROPIC_API_KEY };

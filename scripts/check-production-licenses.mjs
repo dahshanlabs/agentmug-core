@@ -50,6 +50,10 @@ const reviewedNonStandardPackages = new Map([
     "buffers",
     "MIT/X11 in the upstream node-buffers source; the 0.1.1 npm tarball omits license metadata. Used only as an ExcelJS transitive.",
   ],
+  [
+    "unionfs",
+    "Unlicense public-domain dedication in the bundled LICENSE; package.json omits license metadata. Used only through Temporal's workflow bundler.",
+  ],
 ]);
 
 const reviewRequired =

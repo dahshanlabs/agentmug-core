@@ -88,6 +88,8 @@ export type LlmStreamParams = {
    * rather than running to completion before abort lands.
    */
   signal?: AbortSignal;
+  /** Optional effort override for compatible reasoning-model providers. */
+  reasoningEffort?: "low" | "medium" | "high";
   /**
    * Optional Anthropic extended thinking. When set, the model reasons in a
    * visible "thinking" block before answering (budget_tokens caps that
@@ -102,8 +104,21 @@ export type LlmStreamEvent =
   // Streamed extended-thinking text (Anthropic). Lets the UI show the
   // model's reasoning in real time, separate from the final answer.
   | { type: "thinking_delta"; text: string }
-  | { type: "input_tokens"; count: number }
-  | { type: "output_tokens"; count: number }
+  /**
+   * `estimated` / `unknown` must survive to the engine: a custom compatible
+   * endpoint can finish normally while omitting provider usage, and that is
+   * not an exact billing receipt.
+   */
+  | {
+      type: "input_tokens";
+      count: number;
+      usage?: "exact" | "estimated" | "unknown";
+    }
+  | {
+      type: "output_tokens";
+      count: number;
+      usage?: "exact" | "estimated" | "unknown";
+    }
   // Prompt-caching usage (Anthropic). cache_read = tokens served from the
   // cache (~0.1x input price); cache_creation = tokens written to the cache
   // (~1.25x input price). Providers without caching simply never emit these.
@@ -152,9 +167,7 @@ export class AnthropicLlmClient implements LlmClient {
     });
   }
 
-  async *streamMessage(
-    params: LlmStreamParams,
-  ): AsyncIterable<LlmStreamEvent> {
+  async *streamMessage(params: LlmStreamParams): AsyncIterable<LlmStreamEvent> {
     const sdkMessages = params.messages.map(toSdkMessage);
     const sdkTools = params.tools?.map(toSdkTool);
     // Prompt caching. The system prompt and tool schemas are identical across
@@ -172,7 +185,13 @@ export class AnthropicLlmClient implements LlmClient {
       };
     }
     const sdkSystem: Anthropic.MessageCreateParams["system"] = params.system
-      ? [{ type: "text", text: params.system, cache_control: { type: "ephemeral" } }]
+      ? [
+          {
+            type: "text",
+            text: params.system,
+            cache_control: { type: "ephemeral" },
+          },
+        ]
       : params.system;
 
     const stream = this.client.messages.stream(
@@ -206,10 +225,16 @@ export class AnthropicLlmClient implements LlmClient {
         const usage = event.message.usage;
         yield { type: "input_tokens", count: usage.input_tokens };
         if (usage.cache_read_input_tokens) {
-          yield { type: "cache_read_tokens", count: usage.cache_read_input_tokens };
+          yield {
+            type: "cache_read_tokens",
+            count: usage.cache_read_input_tokens,
+          };
         }
         if (usage.cache_creation_input_tokens) {
-          yield { type: "cache_creation_tokens", count: usage.cache_creation_input_tokens };
+          yield {
+            type: "cache_creation_tokens",
+            count: usage.cache_creation_input_tokens,
+          };
         }
       } else if (event.type === "message_delta" && event.usage) {
         yield {
@@ -252,7 +277,11 @@ function toSdkBlock(
   }
   if (block.type === "thinking") {
     // Replay verbatim, signature included — Anthropic validates it.
-    return { type: "thinking", thinking: block.thinking, signature: block.signature ?? "" };
+    return {
+      type: "thinking",
+      thinking: block.thinking,
+      signature: block.signature ?? "",
+    };
   }
   if (block.type === "redacted_thinking") {
     return { type: "redacted_thinking", data: block.data };
@@ -271,8 +300,11 @@ function toSdkBlock(
       type: "image",
       source: {
         type: "base64",
-        media_type:
-          block.mediaType as "image/png" | "image/jpeg" | "image/webp" | "image/gif",
+        media_type: block.mediaType as
+          | "image/png"
+          | "image/jpeg"
+          | "image/webp"
+          | "image/gif",
         data: block.data,
       },
     };
@@ -294,9 +326,7 @@ function toSdkTool(tool: LlmToolDefinition): Anthropic.Tool {
   };
 }
 
-function fromSdkBlock(
-  block: Anthropic.ContentBlock,
-): LlmContentBlock {
+function fromSdkBlock(block: Anthropic.ContentBlock): LlmContentBlock {
   if (block.type === "text") {
     return { type: "text", text: block.text };
   }
@@ -312,7 +342,11 @@ function fromSdkBlock(
   // Extended thinking — preserve verbatim (signature included) so it can be
   // replayed on tool-use turns. This is what the audit flagged as "dropped".
   if (block.type === "thinking") {
-    return { type: "thinking", thinking: block.thinking, signature: block.signature };
+    return {
+      type: "thinking",
+      thinking: block.thinking,
+      signature: block.signature,
+    };
   }
   if (block.type === "redacted_thinking") {
     return { type: "redacted_thinking", data: block.data };

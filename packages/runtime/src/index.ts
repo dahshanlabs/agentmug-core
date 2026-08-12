@@ -34,9 +34,11 @@ export type {
   AgentRecord,
   BlueprintRecord,
   NewRun,
+  RunPrincipal,
   RunCompletion,
   RunFailure,
   RunPause,
+  ProviderCallStart,
   ConnectedAccount,
 } from "./adapters/persistence";
 export {
@@ -58,8 +60,21 @@ export type {
   RunActionReceipt,
   ToolExecutionEnvelope,
 } from "./actions/types";
+export {
+  requiredCapabilityObligations,
+  isCapabilityObligation,
+} from "./actions/obligations";
+export type {
+  CapabilityOperationEffect,
+  RequiredCapabilityObligation,
+} from "./actions/obligations";
 export { buildIdentityDirective } from "./identity-grounding";
-export { buildCapabilityDirective } from "./capability-grounding";
+export {
+  buildCapabilityDirective,
+  buildRefusalDirective,
+  unkeepablePromisesFromPlan,
+  buildWebGroundingDirective,
+} from "./capability-grounding";
 export type { GroundedTool } from "./capability-grounding";
 export { buildConnectionDirective } from "./connection-grounding";
 export type { MissingConnection } from "./connection-grounding";
@@ -75,6 +90,10 @@ export type {
   TranscriptionAdapter,
   TranscriptionResult,
 } from "./adapters/transcription";
+export {
+  isExplicitlyUnsupportedOpenAiParameterError,
+  openAiUsesCompletionTokenLimit,
+} from "./adapters/llm-openai";
 
 export type {
   RemindersAdapter,
@@ -281,11 +300,30 @@ export { fetchUrlDefinition } from "./tools/builtin/fetch-url";
 export type { FetchUrlInput, FetchUrlResult } from "./tools/builtin/fetch-url";
 export { queryCsvDefinition } from "./tools/builtin/query-csv";
 export type { QueryCsvInput, QueryCsvResult } from "./tools/builtin/query-csv";
+export { listRemindersDefinition } from "./tools/builtin/list-reminders";
+export type {
+  ListRemindersInput,
+  ListRemindersResult,
+  ReminderListItem,
+} from "./tools/builtin/list-reminders";
 export { codeExecuteDefinition } from "./tools/builtin/code-execute";
 export type {
   CodeExecuteInput,
   CodeExecuteResult,
 } from "./tools/builtin/code-execute";
+export {
+  capabilityExecuteDefinition,
+  CapabilityExecuteExecutor,
+  executableCapabilitiesFromCapsules,
+  executableSkillsFromUnknown,
+  registerCapabilityExecutionTool,
+} from "./tools/builtin/capability-execute";
+export type {
+  CapabilityExecuteInput,
+  CapabilityExecuteResult,
+  CapabilityExecutionSandbox,
+  CapabilityExecuteExecutorOptions,
+} from "./tools/builtin/capability-execute";
 export { requestCapabilityDefinition } from "./tools/builtin/request-capability";
 export type {
   RequestCapabilityInput,
@@ -530,8 +568,29 @@ export type { HostCapabilities, UnsupportedTrigger } from "./triggers/plan";
 
 export { toAsciiSlug } from "./format/ascii-slug";
 export {
+  EXECUTABLE_CAPABILITY_KIND,
+  EXECUTABLE_CAPABILITY_POLICY,
+  executableCapabilityDigestMaterial,
+  executableCapabilitySha256,
+  inferCapabilityJsonSchema,
+  parseAgentExecutableCapability,
+  portablePythonPolicyChecks,
+  verifyExecutableCapabilityDigest,
+} from "./capabilities/executable-capability";
+export type {
+  AgentExecutableCapabilityV1,
+  UnsignedAgentExecutableCapabilityV1,
+  PortableCapabilityPolicyCheck,
+} from "./capabilities/executable-capability";
+export {
+  AGENT_FILE_SCHEMA_V2,
   AGENT_FILE_SCHEMA_V1,
+  buildAgentFileV2,
+  getCapabilityCapsules,
+  isAgentFileV2,
   parseAgentFile,
+  parseAgentFileV1,
+  parseAgentFileV2,
   parseAgentSkillProofAttestation,
   buildAgentFile,
   serializeAgentFile,
@@ -545,9 +604,21 @@ export {
   modelIsVisionCapable,
   deriveConnectivityFromTools,
 } from "./format/agent-file";
+
+export {
+  canonicalJson,
+  deploymentArtifactDigest,
+  parseDeploymentManifest,
+  type DeploymentManifestV1,
+  type DeploymentPromiseV1,
+  type RunnerHeartbeatV1,
+} from "./deployment/registry-contract";
 export type {
+  AgentFile,
   AgentFileV1,
+  AgentFileV2,
   BuildAgentFileInput,
+  BuildAgentFileV2Input,
   ToolReference,
   BuiltinToolReference,
   McpToolReference,
@@ -558,8 +629,12 @@ export type {
   AgentParameter,
   ArtifactBindingCandidate,
   ArtifactCompatibility,
+  AgentExecutionPlacement,
   AgentCaveat,
   AgentSkill,
   AgentSkillProofAttestation,
+  AgentSkillProofAttestationV1,
+  AgentSkillProofAttestationV2,
+  AgentCapabilityCapsuleV1,
   ConnectivityContract,
 } from "./format/agent-file";

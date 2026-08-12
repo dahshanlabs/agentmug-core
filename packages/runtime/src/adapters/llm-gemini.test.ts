@@ -9,11 +9,16 @@ type CapturedRequest = {
   contents?: Array<{
     role?: string;
     parts?: Array<{
-      functionCall?: { id?: string; name?: string; args?: Record<string, unknown> };
+      functionCall?: {
+        id?: string;
+        name?: string;
+        args?: Record<string, unknown>;
+      };
       functionResponse?: { id?: string; name?: string; response?: unknown };
     }>;
   }>;
   config?: {
+    abortSignal?: AbortSignal;
     tools?: Array<{
       functionDeclarations?: Array<{
         parameters?: Record<string, unknown>;
@@ -32,6 +37,7 @@ const params: LlmStreamParams = {
   system: "Use tools when needed.",
   messages: [{ role: "user", content: "Weather in Riyadh?" }],
   maxTokens: 100,
+  signal: new AbortController().signal,
   tools: [
     {
       name: "weather",
@@ -69,7 +75,9 @@ globalThis.__geminiTestResponses = [
   },
   {
     text: "Sunny",
-    candidates: [{ content: { parts: [{ text: "Sunny" }] }, finishReason: "STOP" }],
+    candidates: [
+      { content: { parts: [{ text: "Sunny" }] }, finishReason: "STOP" },
+    ],
     usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 2 },
   },
 ];
@@ -78,7 +86,9 @@ const client = new GeminiLlmClient({ apiKey: "test-key" });
 const firstEvents: LlmStreamEvent[] = [];
 for await (const event of client.streamMessage(params)) firstEvents.push(event);
 
-const completed = firstEvents.find((event) => event.type === "message_complete");
+const completed = firstEvents.find(
+  (event) => event.type === "message_complete",
+);
 assert.ok(completed && completed.type === "message_complete");
 const toolUse = completed.content.find((block) => block.type === "tool_use");
 assert.ok(toolUse && toolUse.type === "tool_use");
@@ -86,12 +96,13 @@ assert.equal(toolUse.id, "call_weather_1");
 assert.equal(toolUse.name, "weather");
 
 const firstRequest = globalThis.__geminiTestRequests[0];
-const sentParameters = firstRequest?.config?.tools?.[0]?.functionDeclarations?.[0]
-  ?.parameters;
+const sentParameters =
+  firstRequest?.config?.tools?.[0]?.functionDeclarations?.[0]?.parameters;
 const sentProperties = sentParameters?.properties as
   | Record<string, Record<string, unknown>>
   | undefined;
 assert.equal(sentProperties?.units?.type, "string");
+assert.equal(firstRequest?.config?.abortSignal, params.signal);
 const sourceProperties = params.tools?.[0]?.inputSchema.properties as
   | Record<string, Record<string, unknown>>
   | undefined;
@@ -127,4 +138,6 @@ assert.equal(
   "Gemini tool results must replay the original function name",
 );
 
-console.log("  ✓ native Gemini preserves tool schema, call id, and function name");
+console.log(
+  "  ✓ native Gemini preserves tool schema, call id, and function name",
+);

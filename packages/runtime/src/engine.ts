@@ -9,9 +9,14 @@
 import type {
   PersistenceAdapter,
   ConnectedAccount,
+  RunPrincipal,
 } from "./adapters/persistence";
 import { buildIdentityDirective } from "./identity-grounding";
-import { buildCapabilityDirective } from "./capability-grounding";
+import {
+  buildCapabilityDirective,
+  buildRefusalDirective,
+  buildWebGroundingDirective,
+} from "./capability-grounding";
 import {
   buildConnectionDirective,
   type MissingConnection,
@@ -30,6 +35,7 @@ import type {
   LlmToolDefinition,
   LlmToolUseBlock,
 } from "./adapters/llm";
+import { usageCostDelta, type UsageCostTotals } from "./usage-cost";
 import type {
   ToolRegistry,
   ToolExecutionContext,
@@ -44,6 +50,10 @@ import {
   type RunActionReceipt,
   type RunOutcomeStatus,
 } from "./actions/types";
+import {
+  isCapabilityObligation,
+  requiredCapabilityObligations,
+} from "./actions/obligations";
 import {
   readsUntrustedContent,
   resolveSideEffectGate,
@@ -230,8 +240,11 @@ function rateForModel(model: string): TokenRate {
   if (m.includes("flash")) return { input: 0.3, output: 2.5 };
   if (m.startsWith("gemini-") || m.startsWith("google."))
     return { input: 2, output: 12 };
-  // Unknown → conservative Sonnet-like default (never free).
-  return { input: 3, output: 15 };
+  // Unknown/custom model pricing cannot be inferred from an id. Use a
+  // deliberately high safety ceiling instead of silently treating an
+  // arbitrary provider as Sonnet-priced. Tenant-key usage remains a provider
+  // estimate; platform-funded routes should normally select a catalog model.
+  return { input: 100, output: 500 };
 }
 /**
  * Cost of a call in CENTS, priced per the model's input/output rates.
@@ -252,6 +265,61 @@ function costCentsFor(
     cacheCreationTokens * r.input * 1.25 +
     cacheReadTokens * r.input * 0.1;
   return ((inputCents + outputTokens * r.output) / 1_000_000) * 100;
+}
+
+/**
+ * Upper-bound list-price estimate for a provider call whose stream ended
+ * without complete usage metadata. A remote provider may continue generating
+ * after the client disconnects, so the declared output limit is the only safe
+ * portable ceiling; unknown models already use conservative default rates.
+ */
+export function conservativeProviderCallCostCents(input: {
+  model: string;
+  system: string;
+  messages: LlmMessage[];
+  tools?: LlmToolDefinition[];
+  maxTokens: number;
+}): number {
+  let serializedPayload: string;
+  try {
+    serializedPayload = JSON.stringify({
+      messages: input.messages,
+      tools: input.tools ?? [],
+    });
+  } catch {
+    // A cyclic/non-JSON runtime contract has no finite portable size bound.
+    // Refuse it before provider dispatch instead of pretending a hard budget
+    // can be protected by an arbitrary fallback estimate.
+    throw new TypeError("LLM messages and tools must be JSON-serializable.");
+  }
+  const encoder = new TextEncoder();
+  const payloadBytes =
+    encoder.encode(input.system).byteLength +
+    encoder.encode(serializedPayload).byteLength;
+  // Every tokenizer token consumes at least one non-empty byte sequence for
+  // ordinary text. Add explicit per-call/message/tool framing because provider
+  // wire formats can introduce tokens that are not present in our JSON value.
+  const framingTokens =
+    256 + input.messages.length * 32 + (input.tools?.length ?? 0) * 64;
+  const estimatedInputTokens = Math.max(1, payloadBytes + framingTokens);
+  const estimatedOutputTokens = Math.max(1, Math.ceil(input.maxTokens));
+  return costCentsFor(input.model, estimatedInputTokens, estimatedOutputTokens);
+}
+
+/** Provider cost for only the newly executed resume segment. */
+export function incrementalProviderCostCents(
+  model: string,
+  totals: UsageCostTotals,
+  prior: UsageCostTotals,
+): number {
+  const delta = usageCostDelta(totals, prior);
+  return costCentsFor(
+    model,
+    delta.inputTokens,
+    delta.outputTokens,
+    delta.cacheReadTokens,
+    delta.cacheCreationTokens,
+  );
 }
 
 export class AgentNotFoundError extends Error {
@@ -322,6 +390,7 @@ export type EngineEvent =
       totalTokens: number;
       costCents: number;
       latencyMs: number;
+      llmCalls: number;
       /** Honest aggregate of execution plus required real-world actions. */
       outcomeStatus: RunOutcomeStatus;
       /** Structured proof of source reads/writes/approvals/evaluations. */
@@ -372,6 +441,22 @@ export type ContextProvider = (resolvedInputText: string) => Promise<string>;
 export type RunAgentOptions = {
   agentId: string;
   userId: string;
+  /**
+   * Optional host-assigned durable identity. Cloud queues allocate this before
+   * acknowledging a request so reconnect, cancellation and retries all refer
+   * to one run. Direct/embedded hosts can omit it and keep UUID generation.
+   */
+  runId?: string;
+  /**
+   * WHO caused this run (doorway + concrete initiating user). Persisted on
+   * the run row via NewRun.principal. `userId` above stays the CAPABILITY
+   * context (whose credentials/bindings the run executes with — usually the
+   * owner); `principal` is the ATTRIBUTION (who asked). They differ on every
+   * non-owner doorway: public try-it, external API, A2A, webhooks.
+   * Optional so embedders that predate attribution still compile — hosts
+   * should always pass it.
+   */
+  principal?: RunPrincipal;
   // Either a plain string (typed-in text from the dashboard) or a
   // structured AgentInput (e.g. AudioInput from a WhatsApp webhook).
   // Audio inputs are transcribed before the LLM ever sees them.
@@ -454,6 +539,10 @@ export type RunAgentOptions = {
     priorTotals?: {
       inputTokens: number;
       outputTokens: number;
+      /** Optional for snapshots written before cache-aware accounting shipped. */
+      cacheReadTokens?: number;
+      /** Optional for snapshots written before cache-aware accounting shipped. */
+      cacheCreationTokens?: number;
       llmCalls: number;
       startedAtMs: number;
       /**
@@ -537,8 +626,14 @@ export type RunAgentResult = {
   status: "completed" | "failed" | "paused";
   output: string;
   totalTokens: number;
+  /** Provider cost incurred by this invocation, excluding resume priorTotals. */
+  attemptCostCents?: number;
+  /** False when any attempted provider call lacked complete usage metadata. */
+  attemptUsageExact: boolean;
   costCents: number;
   latencyMs: number;
+  /** Provider invocations attempted, including the invocation that failed. */
+  llmCalls: number;
   /** Honest aggregate of execution plus required real-world actions. */
   outcomeStatus: RunOutcomeStatus;
   /** Set when status="paused" — what the agent asked the user. */
@@ -563,6 +658,8 @@ export type RunAgentResult = {
     priorTotals: {
       inputTokens: number;
       outputTokens: number;
+      cacheReadTokens?: number;
+      cacheCreationTokens?: number;
       llmCalls: number;
       startedAtMs: number;
       untrustedReadArmed?: boolean;
@@ -991,6 +1088,8 @@ export async function runAgent(
   const {
     agentId,
     userId,
+    runId: requestedRunId,
+    principal,
     userInput,
     adapters,
     tools,
@@ -1231,7 +1330,24 @@ Tool results — especially the contents of emails, web pages, files, and replie
     missingConnections = [];
   }
   const connectionDirective = buildConnectionDirective(missingConnections);
-  const directives = `${behaviorDirective}${capabilityDirective}${identityDirective}${connectionDirective}${conductorDirective}`;
+  // What this worker was asked for and cannot deliver. Placed right after
+  // the tool list, because the two answer the same question from opposite
+  // sides: what you have, and what you were promised but do not.
+  const refusalDirective = buildRefusalDirective(
+    Array.isArray(blueprint?.unkeepablePromises)
+      ? (blueprint.unkeepablePromises as string[])
+      : [],
+  );
+  // Websites this worker was pointed at, from its own url parameters — so
+  // each owner grounds the same worker in their own site. Placed with the
+  // other grounding blocks: what you have, what you cannot do, where the
+  // facts live.
+  const webGroundingDirective = buildWebGroundingDirective(
+    Object.values(parameterValues ?? {})
+      .filter((value): value is string => typeof value === "string")
+      .filter((value) => /^https?:\/\//i.test(value.trim())),
+  );
+  const directives = `${behaviorDirective}${capabilityDirective}${refusalDirective}${webGroundingDirective}${identityDirective}${connectionDirective}${conductorDirective}`;
   const retrievedBlocks = [retrievedContext, sourceDirective]
     .map((block) => block.trim())
     .filter(Boolean);
@@ -1240,13 +1356,16 @@ Tool results — especially the contents of emails, web pages, files, and replie
       ? `${retrievedBlocks.join("\n\n---\n\n")}\n\n---\n\n${baseSystem}\n\n${dateContext}${memoryBlock}\n\n${directives}`
       : `${baseSystem}\n\n${dateContext}${memoryBlock}\n\n${directives}`;
 
-  const runId = resumeFromState ? resumeFromState.runId : randomUUID();
+  const runId = resumeFromState
+    ? resumeFromState.runId
+    : requestedRunId || randomUUID();
   if (!resumeFromState) {
     await persistence.createRun({
       id: runId,
       agentId,
       input: userMessage,
       startedAt: new Date(),
+      principal,
     });
   }
 
@@ -1283,6 +1402,49 @@ Tool results — especially the contents of emails, web pages, files, and replie
     receiptReadsFor(sourceEvidence),
   );
   const runActions: RunActionReceipt[] = [...(previousReceipt?.actions ?? [])];
+  // Compile the creation contract into run-scoped obligations before the LLM
+  // is allowed to choose tools. This closes the most important honesty gap:
+  // omitting a promised read/write/send can no longer produce a green Done.
+  // Existing receipts are reused on resume, and the stable idempotency key is
+  // based on the requirement rather than a model-generated tool_call id.
+  for (const obligation of requiredCapabilityObligations(
+    blueprint?.capabilityPlan,
+    tools?.list() ?? [],
+  )) {
+    const alreadyRecorded = runActions.some(
+      (action) =>
+        isCapabilityObligation(action) &&
+        action.metadata?.requirementId === obligation.requirementId,
+    );
+    if (alreadyRecorded) continue;
+    const createdAt = new Date().toISOString();
+    const receipt: RunActionReceipt = {
+      id: randomUUID(),
+      runId,
+      agentId,
+      userId,
+      toolCallId: `obligation:${obligation.requirementId}`,
+      toolName: obligation.toolName,
+      ...obligation.action,
+      required: true,
+      status: "pending",
+      proof: "none",
+      providerStatusRank: 0,
+      idempotencyKey: `${runId}:requirement:${obligation.requirementId}`,
+      message: `Required capability has not run yet: ${obligation.requirement}`,
+      metadata: {
+        kind: "capability_obligation",
+        requirementId: obligation.requirementId,
+        requirement: obligation.requirement,
+        operationEffect: obligation.operationEffect,
+        effectful: obligation.effectful,
+      },
+      startedAt: createdAt,
+      updatedAt: createdAt,
+    };
+    runActions.push(receipt);
+    await persistence.saveRunAction?.(receipt);
+  }
   const receiptBase: Omit<
     RunReceipt,
     "status" | "completedAt" | "output" | "error"
@@ -1426,11 +1588,36 @@ Tool results — especially the contents of emails, web pages, files, and replie
               ),
           )
         : false));
-  let totalInputTokens = resumeFromState?.priorTotals?.inputTokens ?? 0;
-  let totalOutputTokens = resumeFromState?.priorTotals?.outputTokens ?? 0;
-  let totalCacheReadTokens = 0;
-  let totalCacheCreationTokens = 0;
-  let llmCalls = resumeFromState?.priorTotals?.llmCalls ?? 0;
+  const priorInputTokens = resumeFromState?.priorTotals?.inputTokens ?? 0;
+  const priorOutputTokens = resumeFromState?.priorTotals?.outputTokens ?? 0;
+  const priorCacheReadTokens =
+    resumeFromState?.priorTotals?.cacheReadTokens ?? 0;
+  const priorCacheCreationTokens =
+    resumeFromState?.priorTotals?.cacheCreationTokens ?? 0;
+  let totalInputTokens = priorInputTokens;
+  let totalOutputTokens = priorOutputTokens;
+  let totalCacheReadTokens = priorCacheReadTokens;
+  let totalCacheCreationTokens = priorCacheCreationTokens;
+  const priorLlmCalls = resumeFromState?.priorTotals?.llmCalls ?? 0;
+  let llmCalls = priorLlmCalls;
+  let unknownAttemptCostCents = 0;
+  let attemptUsageExact = true;
+  const currentAttemptCostCents = () =>
+    incrementalProviderCostCents(
+      model,
+      {
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        cacheReadTokens: totalCacheReadTokens,
+        cacheCreationTokens: totalCacheCreationTokens,
+      },
+      {
+        inputTokens: priorInputTokens,
+        outputTokens: priorOutputTokens,
+        cacheReadTokens: priorCacheReadTokens,
+        cacheCreationTokens: priorCacheCreationTokens,
+      },
+    ) + unknownAttemptCostCents;
 
   try {
     if (evaluationContract) {
@@ -1470,48 +1657,113 @@ Tool results — especially the contents of emails, web pages, files, and replie
       let turnOutputTokens = 0;
       let turnCacheReadTokens = 0;
       let turnCacheCreationTokens = 0;
+      let turnUsageObserved = false;
+      let turnUsageExact = true;
       let stopReason: string | null = null;
       let assistantContent: LlmContentBlock[] | null = null;
-
-      const stream = llm.streamMessage({
+      const conservativeTurnCostCents = conservativeProviderCallCostCents({
         model,
-        maxTokens,
         system: systemPrompt,
         messages: conversation,
         tools: llmTools,
-        // Thread the run's abort signal into the LLM client so the
-        // underlying SDK fetch is cancelled mid-stream on abort
-        // (Anthropic/OpenAI cut the fetch; Gemini bails iteration).
-        signal: options.signal,
-        // Extended thinking when the agent opted in (Anthropic only; other
-        // clients ignore it).
-        thinking,
+        maxTokens,
       });
 
-      for await (const event of stream) {
-        // Mid-stream abort check — stop consuming tokens the moment
-        // the run is aborted instead of draining the rest of the turn.
-        if (options.signal?.aborted) {
-          throw new DOMException("Run aborted", "AbortError");
+      // Mark the call durably before dispatch. If the host process disappears
+      // after the provider accepts the request but before usage is returned,
+      // recovery can still apply this conservative floor exactly once.
+      const callOrdinal = llmCalls + 1;
+      await persistence.recordProviderCallStarted?.({
+        runId,
+        callOrdinal,
+        conservativeCostCents: conservativeTurnCostCents,
+        startedAt: new Date(),
+      });
+      // A provider may bill a prompt and partial completion before its stream
+      // disconnects. Count the invocation when it starts, not only after a
+      // message_complete event arrives.
+      llmCalls = callOrdinal;
+      try {
+        const stream = llm.streamMessage({
+          model,
+          maxTokens,
+          system: systemPrompt,
+          messages: conversation,
+          tools: llmTools,
+          // Thread the run's abort signal into the LLM client so the
+          // underlying SDK fetch is cancelled mid-stream on abort
+          // (Anthropic/OpenAI cut the fetch; Gemini bails iteration).
+          signal: options.signal,
+          // Extended thinking when the agent opted in (Anthropic only; other
+          // clients ignore it).
+          thinking,
+        });
+
+        for await (const event of stream) {
+          // Mid-stream abort check — stop consuming tokens the moment
+          // the run is aborted instead of draining the rest of the turn.
+          if (options.signal?.aborted) {
+            throw new DOMException("Run aborted", "AbortError");
+          }
+          if (event.type === "text_delta") {
+            turnText += event.text;
+            onEvent({ type: "token", content: event.text });
+          } else if (event.type === "thinking_delta") {
+            // Surface live reasoning as a distinct event; not part of the
+            // visible answer text or token cost accounting here.
+            onEvent({ type: "thinking", content: event.text });
+          } else if (event.type === "input_tokens") {
+            turnUsageObserved = true;
+            turnInputTokens = event.count;
+            if (event.usage === "estimated" || event.usage === "unknown") {
+              turnUsageExact = false;
+            }
+          } else if (event.type === "output_tokens") {
+            turnUsageObserved = true;
+            turnOutputTokens = event.count;
+            if (event.usage === "estimated" || event.usage === "unknown") {
+              turnUsageExact = false;
+            }
+          } else if (event.type === "cache_read_tokens") {
+            turnUsageObserved = true;
+            turnCacheReadTokens = event.count;
+          } else if (event.type === "cache_creation_tokens") {
+            turnUsageObserved = true;
+            turnCacheCreationTokens = event.count;
+          } else if (event.type === "message_complete") {
+            stopReason = event.stopReason;
+            assistantContent = event.content;
+          }
         }
-        if (event.type === "text_delta") {
-          turnText += event.text;
-          onEvent({ type: "token", content: event.text });
-        } else if (event.type === "thinking_delta") {
-          // Surface live reasoning as a distinct event; not part of the
-          // visible answer text or token cost accounting here.
-          onEvent({ type: "thinking", content: event.text });
-        } else if (event.type === "input_tokens") {
-          turnInputTokens = event.count;
-        } else if (event.type === "output_tokens") {
-          turnOutputTokens = event.count;
-        } else if (event.type === "cache_read_tokens") {
-          turnCacheReadTokens = event.count;
-        } else if (event.type === "cache_creation_tokens") {
-          turnCacheCreationTokens = event.count;
-        } else if (event.type === "message_complete") {
-          stopReason = event.stopReason;
-          assistantContent = event.content;
+      } finally {
+        // Usage events describe the whole provider call. Preserve the latest
+        // values even when iteration throws, so failed runs remain billable
+        // and budget/accounting ledgers do not silently lose spend.
+        totalInputTokens += turnInputTokens;
+        totalOutputTokens += turnOutputTokens;
+        totalCacheReadTokens += turnCacheReadTokens;
+        totalCacheCreationTokens += turnCacheCreationTokens;
+        if (
+          !turnUsageObserved ||
+          !turnUsageExact ||
+          assistantContent === null ||
+          stopReason === null
+        ) {
+          attemptUsageExact = false;
+          const observedTurnCostCents = costCentsFor(
+            model,
+            turnInputTokens,
+            turnOutputTokens,
+            turnCacheReadTokens,
+            turnCacheCreationTokens,
+          );
+          // Exact partial counters remain useful; add only the difference up
+          // to the conservative ceiling so an interrupted stream is never
+          // counted as free or double-counted.
+          unknownAttemptCostCents += Math.max(
+            0,
+            conservativeTurnCostCents - observedTurnCostCents,
+          );
         }
       }
 
@@ -1519,11 +1771,6 @@ Tool results — especially the contents of emails, web pages, files, and replie
         throw new Error("LLM stream did not emit message_complete");
       }
 
-      llmCalls += 1;
-      totalInputTokens += turnInputTokens;
-      totalOutputTokens += turnOutputTokens;
-      totalCacheReadTokens += turnCacheReadTokens;
-      totalCacheCreationTokens += turnCacheCreationTokens;
       visibleOutput += turnText;
 
       // Token COUNT metric includes cached tokens (they were processed);
@@ -1604,6 +1851,13 @@ Tool results — especially the contents of emails, web pages, files, and replie
         // subscribes to.
         toolContext.currentToolUseId = block.id;
         const effect = tools.get(block.name)?.definition.effect;
+        const pendingObligation = runActions.find(
+          (action) =>
+            isCapabilityObligation(action) &&
+            action.toolName === block.name &&
+            action.status !== "succeeded" &&
+            !action.metadata?.actualToolCallId,
+        );
         let actionReceipt: RunActionReceipt | undefined;
         let returnedActionOutcome: ActionOutcome | undefined;
         // Same-turn side-effect gate: if armed (an untrusted read happened
@@ -1626,29 +1880,56 @@ Tool results — especially the contents of emails, web pages, files, and replie
             content: JSON.stringify({ error: gateDecision.message }),
           } as LlmContentBlock;
         } else {
-          if (effect) {
+          if (effect || pendingObligation) {
             const now = new Date().toISOString();
-            actionReceipt = {
-              id: randomUUID(),
-              runId,
-              agentId,
-              userId,
-              toolCallId: block.id,
-              toolName: block.name,
-              provider: effect.provider,
-              operation: effect.operation,
-              requiredProof: effect.requiredProof,
-              verification: effect.verification,
-              required: effect.required !== false,
-              status: "pending",
-              proof: "none",
-              providerStatusRank: 0,
-              idempotencyKey: `${runId}:${block.id}`,
-              message: "Waiting for the provider outcome.",
-              startedAt: now,
-              updatedAt: now,
-            };
-            runActions.push(actionReceipt);
+            actionReceipt = pendingObligation
+              ? {
+                  ...pendingObligation,
+                  status: "pending",
+                  proof: "none",
+                  providerStatusRank: 0,
+                  message: effect
+                    ? "Waiting for the provider outcome."
+                    : "Checking the required operation result.",
+                  metadata: {
+                    ...(pendingObligation.metadata ?? {}),
+                    actualToolCallId: block.id,
+                  },
+                  updatedAt: now,
+                }
+              : effect
+                ? {
+                    id: randomUUID(),
+                    runId,
+                    agentId,
+                    userId,
+                    toolCallId: block.id,
+                    toolName: block.name,
+                    provider: effect.provider,
+                    operation: effect.operation,
+                    requiredProof: effect.requiredProof,
+                    verification: effect.verification,
+                    required: effect.required !== false,
+                    status: "pending",
+                    proof: "none",
+                    providerStatusRank: 0,
+                    idempotencyKey: `${runId}:${block.id}`,
+                    message: "Waiting for the provider outcome.",
+                    startedAt: now,
+                    updatedAt: now,
+                  }
+                : undefined;
+            if (actionReceipt && !pendingObligation)
+              runActions.push(actionReceipt);
+            if (actionReceipt && pendingObligation) {
+              const obligationIndex = runActions.findIndex(
+                (item) => item.id === actionReceipt?.id,
+              );
+              if (obligationIndex >= 0)
+                runActions[obligationIndex] = actionReceipt;
+            }
+            if (!actionReceipt)
+              throw new Error("Action receipt was not created.");
             toolContext.currentActionId = actionReceipt.id;
             // Fail closed when a host has enabled a durable action ledger: the
             // intent must exist before the external side effect can happen.
@@ -1705,6 +1986,9 @@ Tool results — especially the contents of emails, web pages, files, and replie
         }
         const parsedResult = parseToolResultPayload(result);
         if (actionReceipt) {
+          const capabilityOperation = isCapabilityObligation(actionReceipt);
+          const effectfulObligation =
+            capabilityOperation && actionReceipt.metadata?.effectful === true;
           const fallbackOutcome: ActionOutcome = parsedResult.error
             ? {
                 status: "failed",
@@ -1713,13 +1997,20 @@ Tool results — especially the contents of emails, web pages, files, and replie
                 message: parsedResult.error,
                 error: { message: parsedResult.error },
               }
-            : {
-                status: "unknown",
-                proof: "none",
-                retryable: false,
-                message:
-                  "The tool finished without verifiable evidence of the external outcome.",
-              };
+            : capabilityOperation && !effectfulObligation && !effect
+              ? {
+                  status: "succeeded",
+                  proof: "postcondition_verified",
+                  retryable: false,
+                  message: "Required operation completed successfully.",
+                }
+              : {
+                  status: "unknown",
+                  proof: "none",
+                  retryable: false,
+                  message:
+                    "The tool finished without verifiable evidence of the external outcome.",
+                };
           const outcome = returnedActionOutcome ?? fallbackOutcome;
           const normalizedStatus =
             outcome.status === "succeeded" &&
@@ -1730,6 +2021,7 @@ Tool results — especially the contents of emails, web pages, files, and replie
           const updatedAction: RunActionReceipt = {
             ...actionReceipt,
             ...outcome,
+            ...(capabilityOperation ? { required: true } : {}),
             status: normalizedStatus,
             updatedAt,
             ...(["succeeded", "failed"].includes(normalizedStatus)
@@ -1832,6 +2124,8 @@ Tool results — especially the contents of emails, web pages, files, and replie
           priorTotals: {
             inputTokens: totalInputTokens,
             outputTokens: totalOutputTokens,
+            cacheReadTokens: totalCacheReadTokens,
+            cacheCreationTokens: totalCacheCreationTokens,
             llmCalls,
             startedAtMs: startTime,
             // Keep the side-effect gate armed across the pause (see H1).
@@ -1850,6 +2144,8 @@ Tool results — especially the contents of emails, web pages, files, and replie
             pausedAt,
             totalTokens: pausedTotalTokens,
             costCents: pausedCostCents,
+            attemptCostCents: currentAttemptCostCents(),
+            attemptUsageExact,
             latencyMs: pausedLatency,
             llmCalls,
           });
@@ -1878,7 +2174,10 @@ Tool results — especially the contents of emails, web pages, files, and replie
           output: visibleOutput,
           totalTokens: pausedTotalTokens,
           costCents: pausedCostCents,
+          attemptCostCents: currentAttemptCostCents(),
+          attemptUsageExact,
           latencyMs: pausedLatency,
+          llmCalls,
           outcomeStatus: pausedOutcomeStatus,
           pausedQuestion: pp.question,
           pausedHint: pp.hint,
@@ -1974,6 +2273,8 @@ Tool results — especially the contents of emails, web pages, files, and replie
       output: visibleOutput,
       totalTokens,
       costCents,
+      attemptCostCents: currentAttemptCostCents(),
+      attemptUsageExact,
       latencyMs,
       llmCalls,
       completedAt,
@@ -2006,6 +2307,7 @@ Tool results — especially the contents of emails, web pages, files, and replie
       totalTokens,
       costCents,
       latencyMs,
+      llmCalls,
       outcomeStatus,
       receipt: completedReceipt,
       completedAt: completedAt.toISOString(),
@@ -2017,7 +2319,10 @@ Tool results — especially the contents of emails, web pages, files, and replie
       output: visibleOutput,
       totalTokens,
       costCents,
+      attemptCostCents: currentAttemptCostCents(),
+      attemptUsageExact,
       latencyMs,
+      llmCalls,
       outcomeStatus,
       receipt: completedReceipt,
     };
@@ -2036,10 +2341,29 @@ Tool results — especially the contents of emails, web pages, files, and replie
         ? err.message
         : String(err);
     const failedAt = new Date();
+    const totalTokens =
+      totalInputTokens +
+      totalOutputTokens +
+      totalCacheReadTokens +
+      totalCacheCreationTokens;
+    const costCents = costCentsFor(
+      model,
+      totalInputTokens,
+      totalOutputTokens,
+      totalCacheReadTokens,
+      totalCacheCreationTokens,
+    );
+    const latencyMs = failedAt.getTime() - startTime;
     const outcomeStatus = deriveRunOutcome("failed", runActions);
     await persistence.failRun({
       id: runId,
       output: message,
+      totalTokens,
+      costCents,
+      attemptCostCents: currentAttemptCostCents(),
+      attemptUsageExact,
+      latencyMs,
+      llmCalls,
       completedAt: failedAt,
       outcomeStatus,
     });
@@ -2061,9 +2385,12 @@ Tool results — especially the contents of emails, web pages, files, and replie
       runId,
       status: "failed",
       output: message,
-      totalTokens: totalInputTokens + totalOutputTokens,
-      costCents: 0,
-      latencyMs: Date.now() - startTime,
+      totalTokens,
+      costCents,
+      attemptCostCents: currentAttemptCostCents(),
+      attemptUsageExact,
+      latencyMs,
+      llmCalls,
       outcomeStatus,
       receipt: failedReceipt,
     };

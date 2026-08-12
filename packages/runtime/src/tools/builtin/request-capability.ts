@@ -10,7 +10,14 @@ export const requestCapabilityDefinition: InlineToolDefinition = {
   type: "inline",
   name: "request_capability",
   description:
-    "Ask AgentMug to independently route a suspected capability gap. Use this ONLY when the user's normal task cannot be completed after checking direct reasoning, current tools, verified skills, connection setup, and safe fallbacks; the user never needs to say 'build a capability'. The host re-checks the inventory and returns solve, connect, clarify, or build. If it returns clarify, call ask_user exactly once with the returned question, then reconsider. Only when the owner explicitly enabled automatic drafts may a high-confidence deterministic no-egress gap start an isolated draft automatically. This tool never adds or publishes code. Never claim the original task succeeded until it actually does.",
+    "Ask AgentMug to independently route a suspected capability gap. Use this ONLY when the user's normal task cannot be completed after checking direct reasoning, current tools, verified skills, connection setup, and safe fallbacks; the user never needs to say 'build a capability'. The host re-checks the inventory and returns solve, connect, clarify, build, or platform_build. If it returns clarify, call ask_user exactly once with the returned question, then reconsider. Only when the owner explicitly enabled automatic drafts may a high-confidence deterministic no-egress gap start an isolated draft automatically. Platform builds always require operator review. This tool never adds or publishes code. Never claim the original task succeeded until it actually does.",
+  effect: {
+    provider: "agentmug",
+    operation: "capability_gap_resolution",
+    requiredProof: "postcondition_verified",
+    verification: "manual",
+    required: true,
+  },
   inputSchema: {
     type: "object",
     properties: {
@@ -49,7 +56,7 @@ export type RequestCapabilityInput = {
 
 export type RequestCapabilityResult = {
   ok: boolean;
-  decision?: "solve" | "connect" | "clarify" | "build";
+  decision?: "solve" | "connect" | "clarify" | "build" | "platform_build";
   buildId?: string;
   status?:
     | "suggested"
@@ -59,6 +66,7 @@ export type RequestCapabilityResult = {
     | "building"
     | "verifying"
     | "ready"
+    | "approved"
     | "failed"
     | "cancelled";
   autoStarted?: boolean;
