@@ -26,10 +26,10 @@
   },
   "dependencies": {
     "@agentmug/runtime": "^0.18.0",
-    "@anthropic-ai/sdk": "^0.78.0",
+    "@anthropic-ai/sdk": "^0.117.1",
     "@modelcontextprotocol/sdk": "^1.0.4",
     "exceljs": "4.4.0",
-    "mammoth": "1.12.0"
+    "mammoth": "1.12.1"
   },
   "devDependencies": {
     "@types/node": "catalog:",
