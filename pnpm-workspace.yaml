@@ -7,7 +7,7 @@ packages:
   - examples/*
 
 catalog:
-  '@types/node': ^25.3.3
+  '@types/node': ^26.2.0
   tsx: ^4.21.0
 
 autoInstallPeers: false
