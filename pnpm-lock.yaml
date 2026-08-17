@@ -7,8 +7,8 @@ settings:
 catalogs:
   default:
     '@types/node':
-      specifier: ^25.3.3
-      version: 25.9.5
+      specifier: ^26.2.0
+      version: 26.2.0
     tsx:
       specifier: ^4.21.0
       version: 4.23.1
@@ -33,7 +33,7 @@ importers:
     devDependencies:
       '@changesets/cli':
         specifier: ^2.27.10
-        version: 2.31.1(@types/node@25.9.5)
+        version: 2.31.1(@types/node@26.2.0)
       prettier:
         specifier: ^3.8.1
         version: 3.9.6
@@ -77,7 +77,7 @@ importers:
     dependencies:
       '@agentmug/runtime':
         specifier: ^0.18.0
-        version: link:../runtime
+        version: 0.18.0(@modelcontextprotocol/sdk@1.30.0)(ws@8.21.0)(zod@4.4.3)
       '@anthropic-ai/sdk':
         specifier: ^0.78.0
         version: 0.78.0(zod@4.4.3)
@@ -93,7 +93,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
-        version: 25.9.5
+        version: 26.2.0
       esbuild:
         specifier: 0.28.1
         version: 0.28.1
@@ -112,7 +112,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
-        version: 25.9.5
+        version: 26.2.0
       esbuild:
         specifier: 0.28.1
         version: 0.28.1
@@ -133,7 +133,7 @@ importers:
         version: 1.9.1
       '@types/node':
         specifier: 'catalog:'
-        version: 25.9.5
+        version: 26.2.0
       esbuild:
         specifier: 0.28.1
         version: 0.28.1
@@ -155,7 +155,7 @@ importers:
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
-        version: 25.9.5
+        version: 26.2.0
       ajv:
         specifier: ^8.17.1
         version: 8.20.0
@@ -170,6 +170,10 @@ importers:
         version: 5.9.3
 
 packages:
+
+  '@agentmug/runtime@0.18.0':
+    resolution: {integrity: sha512-NxD60uoGVt6BFjKpKe5s521mspn42yddEQMnQJzJPsAbA59Kh3+FNlawPg1QXLVZHQ3H1hW54C32ATkJ7ZAbDg==}
+    engines: {node: '>=18'}
 
   '@anthropic-ai/sdk@0.78.0':
     resolution: {integrity: sha512-PzQhR715td/m1UaaN5hHXjYB8Gl2lF9UVhrrGrZeysiF6Rb74Wc9GCB8hzLdzmQtBd1qe89F9OptgB9Za1Ib5w==}
@@ -492,8 +496,8 @@ packages:
   '@types/node@22.20.1':
     resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
 
-  '@types/node@25.9.5':
-    resolution: {integrity: sha512-OScDchr2fwuUmWdf4kZ9h7PcJiYDVInhJizG/biAq3cAvqwYktuy/TYGGdZNMtNTFUP7rnb0NU4TUdm82kt4Rg==}
+  '@types/node@26.2.0':
+    resolution: {integrity: sha512-5IviulTZeRNp2vAJ514cc/HUlY5nZ9fCbq9DMyC52BrhFZACo3nI0R7qBxhQmo/d27NFe96ur/b7Wwxklda+kg==}
 
   '@types/retry@0.12.0':
     resolution: {integrity: sha512-wWKOClTTiizcZhXnPY4wikVAwmdYHp8q6DmC+EJUzAMsycb7HB32Kh9RN4+0gExjmPmZSAQjgURXIGATPegAvA==}
@@ -501,6 +505,7 @@ packages:
   '@xmldom/xmldom@0.8.13':
     resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
@@ -1478,8 +1483,8 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
-  undici-types@7.24.6:
-    resolution: {integrity: sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg==}
+  undici-types@8.3.0:
+    resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
 
   universalify@0.1.2:
     resolution: {integrity: sha512-rBJeI5CXAlmy1pV+617WB9J63U6XcazHHF2f2dbJix4XzpUF0RS3Zbj0FGIOCAva5P/d/GBOYaACQ1w+0azUkg==}
@@ -1548,6 +1553,22 @@ packages:
 
 snapshots:
 
+  '@agentmug/runtime@0.18.0(@modelcontextprotocol/sdk@1.30.0)(ws@8.21.0)(zod@4.4.3)':
+    dependencies:
+      '@anthropic-ai/sdk': 0.78.0(zod@4.4.3)
+      '@google/genai': 2.13.0(@modelcontextprotocol/sdk@1.30.0)
+      openai: 6.49.0(ws@8.21.0)(zod@4.4.3)
+    transitivePeerDependencies:
+      - '@aws-sdk/credential-provider-node'
+      - '@modelcontextprotocol/sdk'
+      - '@smithy/hash-node'
+      - '@smithy/signature-v4'
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+      - ws
+      - zod
+
   '@anthropic-ai/sdk@0.78.0(zod@4.4.3)':
     dependencies:
       json-schema-to-ts: 3.1.1
@@ -1585,7 +1606,7 @@ snapshots:
     dependencies:
       '@changesets/types': 6.1.0
 
-  '@changesets/cli@2.31.1(@types/node@25.9.5)':
+  '@changesets/cli@2.31.1(@types/node@26.2.0)':
     dependencies:
       '@changesets/apply-release-plan': 7.1.1
       '@changesets/assemble-release-plan': 6.0.10
@@ -1601,7 +1622,7 @@ snapshots:
       '@changesets/should-skip-package': 0.1.2
       '@changesets/types': 6.1.0
       '@changesets/write': 0.4.0
-      '@inquirer/external-editor': 1.0.3(@types/node@25.9.5)
+      '@inquirer/external-editor': 1.0.3(@types/node@26.2.0)
       '@manypkg/get-packages': 1.1.3
       ansi-colors: 4.1.3
       enquirer: 2.4.1
@@ -1813,12 +1834,12 @@ snapshots:
     dependencies:
       hono: 4.12.34
 
-  '@inquirer/external-editor@1.0.3(@types/node@25.9.5)':
+  '@inquirer/external-editor@1.0.3(@types/node@26.2.0)':
     dependencies:
       chardet: 2.2.0
       iconv-lite: 0.7.3
     optionalDependencies:
-      '@types/node': 25.9.5
+      '@types/node': 26.2.0
 
   '@manypkg/find-root@1.1.0':
     dependencies:
@@ -1900,9 +1921,9 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
-  '@types/node@25.9.5':
+  '@types/node@26.2.0':
     dependencies:
-      undici-types: 7.24.6
+      undici-types: 8.3.0
 
   '@types/retry@0.12.0': {}
 
@@ -2710,7 +2731,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.2
-      '@types/node': 25.9.5
+      '@types/node': 22.20.1
       long: 5.3.2
 
   proxy-addr@2.0.7:
@@ -2931,7 +2952,7 @@ snapshots:
 
   undici-types@6.21.0: {}
 
-  undici-types@7.24.6: {}
+  undici-types@8.3.0: {}
 
   universalify@0.1.2: {}
 
