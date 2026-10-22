@@ -27,7 +27,7 @@
   "dependencies": {
     "@agentmug/runtime": "^0.18.0",
     "@anthropic-ai/sdk": "^0.78.0",
-    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "exceljs": "4.4.0",
     "mammoth": "1.12.0"
   },
